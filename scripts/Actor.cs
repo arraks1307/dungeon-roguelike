@@ -38,6 +38,14 @@ public partial class Actor : Node3D
         AddChild(Body);
     }
 
+    /// <summary>Полупрозрачное тело (для призраков).</summary>
+    protected void MakeTranslucent(float alpha)
+    {
+        BaseColor = new Color(BaseColor, alpha);
+        BodyMaterial.AlbedoColor = BaseColor;
+        BodyMaterial.Transparency = BaseMaterial3D.TransparencyEnum.Alpha;
+    }
+
     /// <summary>Мгновенное перемещение (новый этаж, появление на карте).</summary>
     public void Teleport(Vector2I p)
     {

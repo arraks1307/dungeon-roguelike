@@ -19,8 +19,9 @@ public enum GameState
 /// Создаёт мир, управляет состояниями (меню, игра, инвентарь, пауза, смерть),
 /// очерёдностью ходов, предметами, этажами и рестартом.
 /// </summary>
-public partial class GameManager : Node3D
+public partial class GameManager : Node3D, IGameWorld
 {
+    private const int BossFloorInterval = 5;
     private const int MapWidth = 48;
     private const int MapHeight = 32;
     private const int FovRadius = 8;
@@ -36,6 +37,8 @@ public partial class GameManager : Node3D
     private readonly List<Enemy> _enemies = new();
     private readonly Dictionary<Vector2I, ItemPickup> _floorItems = new();
     private HashSet<Vector2I> _visible = new();
+    private Dictionary<Vector2I, int> _playerDistances = new();
+    private Enemy _boss;
 
     private DungeonMap _map;
     private DungeonRenderer _renderer;
@@ -54,6 +57,53 @@ public partial class GameManager : Node3D
     private string _screenshotView = "play";
     private int _autoMoves;
     private int _frame;
+    private int _startFloor = 1;
+    private bool _godMode; // только для самопроверки: игрок не может погибнуть
+
+    // ---------- Реализация IGameWorld (то, что видят враги) ----------
+
+    public DungeonMap Map => _map;
+    public Vector2I PlayerPos => _player.GridPos;
+    public Dictionary<Vector2I, int> PlayerDistances => _playerDistances;
+
+    public bool IsOccupied(Vector2I cell) => cell == _player.GridPos || EnemyAt(cell) != null;
+
+    public bool IsVisibleToPlayer(Vector2I cell) => _visible.Contains(cell);
+
+    public void EnemyAttacksPlayer(Enemy enemy, bool ranged)
+    {
+        if (ranged)
+            Effects.Projectile(this, enemy.GridPos, _player.GridPos, enemy.Type.Color);
+        else
+            enemy.PlayAttack(_player.GridPos);
+
+        int damage = RollDamage(enemy, _player);
+        _player.TakeDamage(damage);
+        if (_godMode)
+            _player.Heal(damage);
+        string verb = ranged ? "стреляет в тебя" : "бьёт тебя";
+        _hud.AddMessage($"{enemy.DisplayName} {verb}: -{damage}.", DamageColor);
+
+        if (_player.IsDead)
+            GameOver(enemy);
+    }
+
+    public void SummonMinions(Enemy summoner, int count)
+    {
+        var minionTypes = Enemy.Types.Where(type => type.MinFloor == 1).ToArray();
+        int summoned = 0;
+        foreach (var direction in DungeonMap.Directions)
+        {
+            var cell = summoner.GridPos + direction;
+            if (summoned == count || !_map.CanMove(summoner.GridPos, cell) || IsOccupied(cell))
+                continue;
+            var minion = SpawnEnemy(minionTypes[_rng.Next(minionTypes.Length)], cell);
+            minion.Alerted = true;
+            summoned++;
+        }
+        if (summoned > 0)
+            _hud.AddMessage($"{summoner.DisplayName} призывает подмогу!", DamageColor);
+    }
 
     public override void _Ready()
     {
@@ -196,7 +246,7 @@ public partial class GameManager : Node3D
     private void StartNewGame()
     {
         _state = GameState.Playing;
-        _floor = 0;
+        _floor = _startFloor - 1;
         _kills = 0;
         _mainMenu.Visible = false;
         _hud.Visible = true;
@@ -263,18 +313,46 @@ public partial class GameManager : Node3D
         _floor++;
         ClearLevelObjects();
 
-        _map = DungeonGenerator.Generate(MapWidth, MapHeight, _rng);
+        bool bossFloor = _floor % BossFloorInterval == 0;
+        _map = DungeonGenerator.Generate(MapWidth, MapHeight, _rng, withBossRoom: bossFloor);
         _renderer.Build(_map);
         _player.Teleport(_map.StartPos);
         _camera.SnapToTarget();
 
-        SpawnEnemies(Math.Min(3 + _floor * 2, 25));
+        int enemyCount = Math.Min(3 + _floor * 2, 25);
+        SpawnEnemies(bossFloor ? enemyCount / 2 : enemyCount);
         SpawnItems(_rng.Next(3, 6));
+        if (bossFloor)
+            SpawnBoss();
 
         UpdateFov();
         UpdateHud();
-        if (_floor > 1)
+        if (bossFloor)
+            _hud.AddMessage("Ты чувствуешь присутствие чего-то огромного... Лестница откроется после победы над боссом.", DamageColor);
+        else if (_floor > 1)
             _hud.AddMessage($"Этаж {_floor}. Здесь опаснее.", InfoColor);
+    }
+
+    /// <summary>
+    /// Босс стоит в последней комнате рядом с лестницей. Пока он жив, клетка лестницы — обычный пол.
+    /// </summary>
+    private void SpawnBoss()
+    {
+        var stairs = _map.StairsPos;
+        _map.Tiles[stairs.X, stairs.Y] = Tile.Floor;
+
+        var cell = stairs + new Vector2I(0, -2);
+        if (!_map.IsWalkable(cell) || IsOccupied(cell))
+            cell = stairs;
+        var blocker = EnemyAt(cell);
+        if (blocker != null)
+        {
+            // Редкий случай: на месте босса уже стоит обычный враг — убираем его
+            _enemies.Remove(blocker);
+            blocker.QueueFree();
+        }
+
+        _boss = SpawnEnemy(Enemy.BossType, cell);
     }
 
     private void ClearLevelObjects()
@@ -285,6 +363,7 @@ public partial class GameManager : Node3D
         foreach (var pickup in _floorItems.Values)
             pickup.QueueFree();
         _floorItems.Clear();
+        _boss = null;
     }
 
     // ---------- Ход игрока ----------
@@ -347,7 +426,18 @@ public partial class GameManager : Node3D
         enemy.Die();
         _kills++;
 
-        if (_rng.NextDouble() < DropChance && !_floorItems.ContainsKey(enemy.GridPos))
+        if (enemy == _boss)
+        {
+            _boss = null;
+            var stairs = _map.StairsPos;
+            _map.Tiles[stairs.X, stairs.Y] = Tile.Stairs;
+            _hud.AddMessage("Босс повержен! Путь вниз открыт.", InfoColor);
+            // Награда: предмет как будто с более глубокого этажа
+            var dropCell = _floorItems.ContainsKey(enemy.GridPos) || enemy.GridPos == stairs ? _player.GridPos : enemy.GridPos;
+            if (!_floorItems.ContainsKey(dropCell))
+                PlaceItem(ItemCatalog.Roll(_rng, _floor + 2), dropCell);
+        }
+        else if (_rng.NextDouble() < DropChance && !_floorItems.ContainsKey(enemy.GridPos))
         {
             PlaceItem(ItemCatalog.Roll(_rng, _floor), enemy.GridPos);
             _hud.AddMessage($"{enemy.DisplayName} что-то роняет.");
@@ -473,33 +563,15 @@ public partial class GameManager : Node3D
     private void EnemiesTurn()
     {
         // Поле расстояний считаем один раз за ход — им пользуются все враги
-        var distances = _map.DistanceField(_player.GridPos, ChaseDistance);
+        _playerDistances = _map.DistanceField(_player.GridPos, ChaseDistance);
 
-        foreach (var enemy in _enemies)
+        // ToList() — копия списка: босс может призвать новых врагов прямо во время перебора,
+        // а менять коллекцию, по которой идёт foreach, нельзя
+        foreach (var enemy in _enemies.ToList())
         {
-            if (_visible.Contains(enemy.GridPos))
-                enemy.Alerted = true;
-            if (!enemy.Alerted || !enemy.ShouldActThisTurn())
-                continue;
-
-            if (_map.AreAdjacent(enemy.GridPos, _player.GridPos))
-            {
-                enemy.PlayAttack(_player.GridPos);
-                int damage = RollDamage(enemy, _player);
-                _player.TakeDamage(damage);
-                _hud.AddMessage($"{enemy.DisplayName} бьёт тебя: -{damage}.", DamageColor);
-
-                if (_player.IsDead)
-                {
-                    GameOver(enemy);
-                    return;
-                }
-                continue;
-            }
-
-            var step = enemy.ChooseStep(distances, cell => _map.CanMove(enemy.GridPos, cell) && !IsOccupied(cell));
-            if (step.HasValue)
-                enemy.MoveTo(step.Value);
+            if (_state != GameState.Playing)
+                return; // игрок погиб — остальные враги уже не ходят
+            enemy.TakeTurn(this);
         }
     }
 
@@ -512,12 +584,19 @@ public partial class GameManager : Node3D
         {
             if (!TryFindFreeCell(out var cell))
                 return;
-            var enemy = new Enemy();
-            enemy.Setup(available[_rng.Next(available.Length)], _floor);
-            AddChild(enemy);
-            enemy.Teleport(cell);
-            _enemies.Add(enemy);
+            SpawnEnemy(available[_rng.Next(available.Length)], cell);
         }
+    }
+
+    private Enemy SpawnEnemy(EnemyType type, Vector2I cell)
+    {
+        var enemy = new Enemy();
+        enemy.Setup(type, _floor);
+        AddChild(enemy);
+        enemy.Teleport(cell);
+        enemy.Visible = _visible.Contains(cell);
+        _enemies.Add(enemy);
+        return enemy;
     }
 
     private void SpawnItems(int count)
@@ -563,11 +642,13 @@ public partial class GameManager : Node3D
         _hud.UpdateMinimap(_map, _visible, _player.GridPos, visibleEnemies, items);
     }
 
-    private void UpdateHud() => _hud.UpdateStats(_player, _floor, _kills);
+    private void UpdateHud()
+    {
+        _hud.UpdateStats(_player, _floor, _kills);
+        _hud.UpdateBoss(_boss);
+    }
 
     private Enemy EnemyAt(Vector2I cell) => _enemies.Find(enemy => enemy.GridPos == cell);
-
-    private bool IsOccupied(Vector2I cell) => cell == _player.GridPos || EnemyAt(cell) != null;
 
     /// <summary>Урон = атака ± 1 минус защита цели, но не меньше 1.</summary>
     private int RollDamage(Actor attacker, Actor defender) =>
@@ -585,6 +666,10 @@ public partial class GameManager : Node3D
                 _autoMoves = int.Parse(arg["--moves=".Length..]);
             else if (arg.StartsWith("--view="))
                 _screenshotView = arg["--view=".Length..];
+            else if (arg == "--god")
+                _godMode = true;
+            else if (arg.StartsWith("--start-floor="))
+                _startFloor = int.Parse(arg["--start-floor=".Length..]);
         }
     }
 

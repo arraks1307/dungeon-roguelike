@@ -8,7 +8,13 @@ namespace Roguelike;
 /// </summary>
 public static class DungeonGenerator
 {
-    public static DungeonMap Generate(int width, int height, Random rng,
+    private const int BossRoomWidth = 12;
+    private const int BossRoomHeight = 9;
+
+    /// <summary>
+    /// withBossRoom — добавить в конце большую комнату для босса. Лестница всегда в последней комнате.
+    /// </summary>
+    public static DungeonMap Generate(int width, int height, Random rng, bool withBossRoom = false,
         int maxRooms = 14, int minRoomSize = 4, int maxRoomSize = 9)
     {
         var map = new DungeonMap(width, height);
@@ -31,6 +37,9 @@ public static class DungeonGenerator
             map.Rooms.Add(room);
         }
 
+        if (withBossRoom)
+            TryAddBossRoom(map, rng);
+
         map.StartPos = Center(map.Rooms[0]);
         map.StairsPos = Center(map.Rooms[^1]);
         map.Tiles[map.StairsPos.X, map.StairsPos.Y] = Tile.Stairs;
@@ -38,6 +47,27 @@ public static class DungeonGenerator
     }
 
     public static Vector2I Center(Rect2I room) => room.Position + room.Size / 2;
+
+    /// <summary>
+    /// Большой зал ставим туда, где он не пересекается с комнатами. Коридоры его пересекать могут —
+    /// это не страшно, они просто станут входами в зал. Если места не нашлось, боссом станет последняя комната.
+    /// </summary>
+    private static void TryAddBossRoom(DungeonMap map, Random rng)
+    {
+        for (int attempt = 0; attempt < 300; attempt++)
+        {
+            int x = rng.Next(1, map.Width - BossRoomWidth - 1);
+            int y = rng.Next(1, map.Height - BossRoomHeight - 1);
+            var room = new Rect2I(x, y, BossRoomWidth, BossRoomHeight);
+            if (map.Rooms.Exists(other => other.Grow(1).Intersects(room)))
+                continue;
+
+            CarveRoom(map, room);
+            CarveCorridor(map, Center(map.Rooms[^1]), Center(room), rng);
+            map.Rooms.Add(room);
+            return;
+        }
+    }
 
     private static void CarveRoom(DungeonMap map, Rect2I room)
     {

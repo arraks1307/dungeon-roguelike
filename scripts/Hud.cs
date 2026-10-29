@@ -17,6 +17,9 @@ public partial class Hud : CanvasLayer
     private Label _gearLabel;
     private Minimap _minimap;
     private VBoxContainer _log;
+    private VBoxContainer _bossBox;
+    private Label _bossLabel;
+    private ProgressBar _bossBar;
     private ColorRect _gameOverPanel;
     private Label _gameOverLabel;
 
@@ -86,6 +89,29 @@ public partial class Hud : CanvasLayer
         help.Modulate = new Color(1f, 1f, 1f, 0.6f);
         column.AddChild(help);
 
+        // Полоска здоровья босса по центру сверху: якоря на середине, отступы ±220 пикселей
+        _bossBox = new VBoxContainer
+        {
+            AnchorLeft = 0.5f, AnchorRight = 0.5f,
+            OffsetLeft = -220f, OffsetRight = 220f, OffsetTop = 16f,
+            Visible = false,
+            MouseFilter = Control.MouseFilterEnum.Ignore,
+        };
+        AddChild(_bossBox);
+        _bossLabel = Ui.CreateLabel(22);
+        _bossLabel.HorizontalAlignment = HorizontalAlignment.Center;
+        _bossLabel.AddThemeColorOverride("font_color", Ui.TitleColor);
+        _bossBox.AddChild(_bossLabel);
+        _bossBar = new ProgressBar
+        {
+            ShowPercentage = false,
+            CustomMinimumSize = new Vector2(440f, 18f),
+            MouseFilter = Control.MouseFilterEnum.Ignore,
+        };
+        _bossBar.AddThemeStyleboxOverride("background", new StyleBoxFlat { BgColor = new Color(0.15f, 0.05f, 0.1f) });
+        _bossBar.AddThemeStyleboxOverride("fill", new StyleBoxFlat { BgColor = new Color(0.7f, 0.1f, 0.4f) });
+        _bossBox.AddChild(_bossBar);
+
         _gameOverPanel = new ColorRect { Color = new Color(0f, 0f, 0f, 0.75f), Visible = false };
         _gameOverPanel.SetAnchorsPreset(Control.LayoutPreset.FullRect);
         AddChild(_gameOverPanel);
@@ -109,6 +135,17 @@ public partial class Hud : CanvasLayer
         var inventory = player.Inventory;
         _gearLabel.Text = $"Оружие: {inventory.Weapon?.Name ?? "нет"}   Броня: {inventory.Armor?.Name ?? "нет"}   " +
                           $"Сумка: {inventory.Items.Count}/{Inventory.Capacity}";
+    }
+
+    /// <summary>Показывает полоску босса, если он есть и уже заметил игрока.</summary>
+    public void UpdateBoss(Enemy boss)
+    {
+        _bossBox.Visible = boss != null && boss.Alerted && !boss.IsDead;
+        if (!_bossBox.Visible)
+            return;
+        _bossLabel.Text = $"{boss.DisplayName}: {boss.Hp} / {boss.MaxHp}";
+        _bossBar.MaxValue = boss.MaxHp;
+        _bossBar.Value = boss.Hp;
     }
 
     public void UpdateMinimap(DungeonMap map, HashSet<Vector2I> visible, Vector2I player,

@@ -78,7 +78,9 @@ public partial class DungeonRenderer : Node3D
         foreach (var (cell, index) in _wallIndex)
             _walls.SetInstanceColor(index, CellColor(cell, WallColor, visible));
 
-        _stairs.Visible = _map.Explored[_map.StairsPos.X, _map.StairsPos.Y];
+        // На этаже с боссом лестница — обычный пол, пока босс жив
+        var stairs = _map.StairsPos;
+        _stairs.Visible = _map.Get(stairs) == Tile.Stairs && _map.Explored[stairs.X, stairs.Y];
     }
 
     private Color CellColor(Vector2I cell, Color baseColor, HashSet<Vector2I> visible)
