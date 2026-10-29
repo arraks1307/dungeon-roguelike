@@ -15,8 +15,15 @@ public partial class CameraRig : Camera3D
     private const float ZoomStep = 0.1f;
     private const float FollowSpeed = 8f;
 
+    /// <summary>
+    /// Поворот камеры. Basis.LookingAt направляет ось -Z вдоль взгляда камеры,
+    /// значит ось +Z смотрит на камеру — так повёрнутый QuadMesh виден «лицом».
+    /// </summary>
+    public static readonly Basis ViewBasis = Basis.LookingAt(-BaseOffset, Vector3.Up);
+
     private float _zoom = 1f;
     private double _menuTime;
+    private float _shake;
 
     public Node3D Target { get; set; }
 
@@ -36,12 +43,21 @@ public partial class CameraRig : Camera3D
 
     public void SnapToTarget() => Position = GoalPosition();
 
+    /// <summary>Тряска камеры: сила затухает сама за доли секунды.</summary>
+    public void Shake(float strength) => _shake = Mathf.Max(_shake, strength);
+
     public override void _Process(double delta)
     {
         if (MenuMode)
             _menuTime += delta;
         // Плавное следование: каждый кадр сокращаем расстояние до цели на долю, зависящую от delta
         Position = Position.Lerp(GoalPosition(), 1f - Mathf.Exp(-FollowSpeed * (float)delta));
+
+        if (_shake > 0.001f)
+        {
+            Position += new Vector3((float)GD.RandRange(-1.0, 1.0), 0f, (float)GD.RandRange(-1.0, 1.0)) * _shake;
+            _shake *= Mathf.Exp(-12f * (float)delta);
+        }
     }
 
     private Vector3 GoalPosition()

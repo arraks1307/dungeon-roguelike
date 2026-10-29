@@ -22,9 +22,13 @@ public partial class Actor : Node3D
     protected StandardMaterial3D BodyMaterial;
     protected Color BaseColor;
 
+    private const float BarWidth = 0.7f;
+
     private Vector3 _bodyRestPosition;
     private Tween _moveTween;
     private Tween _attackTween;
+    private Node3D _healthBar;
+    private MeshInstance3D _healthFill;
 
     public static Vector3 GridToWorld(Vector2I p) => new(p.X, 0f, p.Y);
 
@@ -36,6 +40,46 @@ public partial class Actor : Node3D
         _bodyRestPosition = new Vector3(0f, height, 0f);
         Body = new MeshInstance3D { Mesh = mesh, Position = _bodyRestPosition };
         AddChild(Body);
+    }
+
+    /// <summary>
+    /// Полоска здоровья над головой. Камера никогда не поворачивается, поэтому достаточно
+    /// один раз развернуть полоску «лицом» к камере (CameraRig.ViewBasis).
+    /// </summary>
+    protected void CreateHealthBar(float height)
+    {
+        _healthBar = new Node3D { Position = new Vector3(0f, height, 0f), Basis = CameraRig.ViewBasis, Visible = false };
+        _healthBar.AddChild(CreateBarQuad(new Color(0.1f, 0.02f, 0.02f, 0.9f), 0));
+        _healthFill = CreateBarQuad(new Color(0.95f, 0.2f, 0.2f), 1);
+        _healthBar.AddChild(_healthFill);
+        AddChild(_healthBar);
+    }
+
+    private static MeshInstance3D CreateBarQuad(Color color, int renderPriority) => new()
+    {
+        Mesh = new QuadMesh
+        {
+            Size = new Vector2(BarWidth, 0.08f),
+            Material = new StandardMaterial3D
+            {
+                AlbedoColor = color,
+                ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded, // не зависит от освещения
+                Transparency = BaseMaterial3D.TransparencyEnum.Alpha,
+                NoDepthTest = true,               // видна даже за стеной
+                RenderPriority = renderPriority, // заливка рисуется поверх фона
+            },
+        },
+    };
+
+    private void UpdateHealthBar()
+    {
+        if (_healthBar == null)
+            return;
+        float ratio = (float)Hp / MaxHp;
+        _healthBar.Visible = Hp > 0 && Hp < MaxHp;
+        // Сжимаем заливку по ширине и сдвигаем влево, чтобы она «убывала» справа
+        _healthFill.Scale = new Vector3(Mathf.Max(ratio, 0.001f), 1f, 1f);
+        _healthFill.Position = new Vector3(-(1f - ratio) * BarWidth / 2f, 0f, 0f);
     }
 
     /// <summary>Полупрозрачное тело (для призраков).</summary>
@@ -77,6 +121,7 @@ public partial class Actor : Node3D
     public void TakeDamage(int amount)
     {
         Hp = Mathf.Max(Hp - amount, 0);
+        UpdateHealthBar();
         // Вспышка белым и плавный возврат к обычному цвету
         BodyMaterial.AlbedoColor = Colors.White;
         CreateTween().TweenProperty(BodyMaterial, "albedo_color", BaseColor, 0.25f);

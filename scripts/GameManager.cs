@@ -48,6 +48,7 @@ public partial class GameManager : Node3D, IGameWorld
     private MainMenu _mainMenu;
     private PauseMenu _pauseMenu;
     private InventoryPanel _inventoryPanel;
+    private SoundManager _sound;
     private GameState _state;
     private int _floor;
     private int _kills;
@@ -73,14 +74,22 @@ public partial class GameManager : Node3D, IGameWorld
     public void EnemyAttacksPlayer(Enemy enemy, bool ranged)
     {
         if (ranged)
+        {
             Effects.Projectile(this, enemy.GridPos, _player.GridPos, enemy.Type.Color);
+            _sound.Play(Sound.Shoot);
+        }
         else
+        {
             enemy.PlayAttack(_player.GridPos);
+        }
 
         int damage = RollDamage(enemy, _player);
         _player.TakeDamage(damage);
         if (_godMode)
             _player.Heal(damage);
+        Effects.FloatingText(this, _player.GridPos, $"-{damage}", DamageColor);
+        _sound.Play(Sound.Hurt);
+        _camera.Shake(0.12f);
         string verb = ranged ? "стреляет в тебя" : "бьёт тебя";
         _hud.AddMessage($"{enemy.DisplayName} {verb}: -{damage}.", DamageColor);
 
@@ -99,15 +108,22 @@ public partial class GameManager : Node3D, IGameWorld
                 continue;
             var minion = SpawnEnemy(minionTypes[_rng.Next(minionTypes.Length)], cell);
             minion.Alerted = true;
+            Effects.Burst(this, cell, new Color(0.6f, 0.2f, 0.8f), 14);
             summoned++;
         }
         if (summoned > 0)
+        {
             _hud.AddMessage($"{summoner.DisplayName} призывает подмогу!", DamageColor);
+            _sound.Play(Sound.Summon);
+        }
     }
 
     public override void _Ready()
     {
         SetupEnvironment();
+
+        _sound = new SoundManager();
+        AddChild(_sound);
 
         _renderer = new DungeonRenderer();
         AddChild(_renderer);
@@ -288,6 +304,8 @@ public partial class GameManager : Node3D, IGameWorld
     {
         _state = GameState.GameOver;
         UpdateHud();
+        _sound.Play(Sound.Death);
+        _camera.Shake(0.4f);
 
         // В режиме самопроверки не засоряем таблицу рекордов
         int place = _screenshotPath == null
@@ -387,9 +405,11 @@ public partial class GameManager : Node3D, IGameWorld
             else
             {
                 _player.MoveTo(target);
+                _sound.Play(Sound.Step);
                 TryPickUpItem(target);
                 if (_map.Get(target) == Tile.Stairs)
                 {
+                    _sound.Play(Sound.Stairs);
                     NextFloor();
                     return;
                 }
@@ -412,6 +432,9 @@ public partial class GameManager : Node3D, IGameWorld
         _player.PlayAttack(enemy.GridPos);
         int damage = RollDamage(_player, enemy);
         enemy.TakeDamage(damage);
+        Effects.FloatingText(this, enemy.GridPos, damage.ToString(), Colors.White);
+        Effects.Burst(this, enemy.GridPos, enemy.Type.Color, 8);
+        _sound.Play(Sound.Hit);
 
         if (enemy.IsDead)
             KillEnemy(enemy);
@@ -425,6 +448,8 @@ public partial class GameManager : Node3D, IGameWorld
         _enemies.Remove(enemy);
         enemy.Die();
         _kills++;
+        Effects.Burst(this, enemy.GridPos, enemy.Type.Color, enemy.IsBoss ? 60 : 20);
+        _sound.Play(Sound.Kill);
 
         if (enemy == _boss)
         {
@@ -447,6 +472,9 @@ public partial class GameManager : Node3D, IGameWorld
         {
             _player.LevelUp();
             _hud.AddMessage($"Новый уровень: {_player.Level}! Атака и здоровье выросли.", InfoColor);
+            Effects.FloatingText(this, _player.GridPos, "Уровень!", InfoColor);
+            Effects.Burst(this, _player.GridPos, InfoColor, 24);
+            _sound.Play(Sound.LevelUp);
         }
     }
 
@@ -465,6 +493,7 @@ public partial class GameManager : Node3D, IGameWorld
         _floorItems.Remove(cell);
         pickup.QueueFree();
         _hud.AddMessage($"Ты подбираешь: {pickup.Item.Name}.", GoodColor);
+        _sound.Play(Sound.Pickup);
     }
 
     private void PlaceItem(Item item, Vector2I cell)
@@ -487,11 +516,13 @@ public partial class GameManager : Node3D, IGameWorld
             case ItemKind.Weapon:
                 _player.Equip(index);
                 _hud.AddMessage($"Ты берёшь в руки: {item.Name}.", InfoColor);
+                _sound.Play(Sound.Equip);
                 break;
 
             case ItemKind.Armor:
                 _player.Equip(index);
                 _hud.AddMessage($"Ты надеваешь: {item.Name}.", InfoColor);
+                _sound.Play(Sound.Equip);
                 break;
 
             case ItemKind.HealthPotion:
@@ -503,15 +534,21 @@ public partial class GameManager : Node3D, IGameWorld
                 inventory.Items.RemoveAt(index);
                 _player.Heal(item.Power);
                 _hud.AddMessage($"Ты выпиваешь {item.Name}: +{item.Power} здоровья.", GoodColor);
+                Effects.FloatingText(this, _player.GridPos, $"+{item.Power}", GoodColor);
+                Effects.Burst(this, _player.GridPos, GoodColor, 12);
+                _sound.Play(Sound.Heal);
                 break;
 
             case ItemKind.TeleportScroll:
                 if (!TryFindFreeCell(out var destination, includeStartRoom: true))
                     return;
                 inventory.Items.RemoveAt(index);
+                Effects.Burst(this, _player.GridPos, item.Color, 20);
                 _player.Teleport(destination);
+                Effects.Burst(this, destination, item.Color, 20);
                 _camera.SnapToTarget();
                 _hud.AddMessage("Вспышка — и ты в другом месте!", InfoColor);
+                _sound.Play(Sound.Teleport);
                 break;
 
             case ItemKind.FireScroll:
@@ -524,9 +561,13 @@ public partial class GameManager : Node3D, IGameWorld
                 inventory.Items.RemoveAt(index);
                 int damage = item.Power + _floor;
                 _hud.AddMessage($"Огненная волна! Все видимые враги получают {damage} урона.", InfoColor);
+                _sound.Play(Sound.Fire);
+                _camera.Shake(0.2f);
                 foreach (var enemy in targets)
                 {
                     enemy.TakeDamage(damage);
+                    Effects.FloatingText(this, enemy.GridPos, damage.ToString(), item.Color);
+                    Effects.Burst(this, enemy.GridPos, item.Color, 24);
                     if (enemy.IsDead)
                         KillEnemy(enemy);
                 }

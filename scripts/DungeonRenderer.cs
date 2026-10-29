@@ -22,6 +22,8 @@ public partial class DungeonRenderer : Node3D
     private MeshInstance3D _stairs;
     private readonly Dictionary<Vector2I, int> _floorIndex = new();
     private readonly Dictionary<Vector2I, int> _wallIndex = new();
+    private readonly List<(Vector2I Wall, Torch Torch)> _torches = new();
+    private readonly System.Random _rng = new();
 
     public void Build(DungeonMap map)
     {
@@ -30,6 +32,7 @@ public partial class DungeonRenderer : Node3D
             child.QueueFree();
         _floorIndex.Clear();
         _wallIndex.Clear();
+        _torches.Clear();
 
         var floorCells = new List<Vector2I>();
         var wallCells = new List<Vector2I>();
@@ -62,6 +65,31 @@ public partial class DungeonRenderer : Node3D
             Visible = false,
         };
         AddChild(_stairs);
+
+        PlaceTorches();
+    }
+
+    /// <summary>
+    /// По факелу на верхнюю стену каждой комнаты. Верхняя стена повёрнута к камере,
+    /// поэтому факел на ней хорошо видно.
+    /// </summary>
+    private void PlaceTorches()
+    {
+        foreach (var room in _map.Rooms)
+        {
+            int wallY = room.Position.Y - 1;
+            var candidates = new List<Vector2I>();
+            for (int x = room.Position.X; x < room.End.X; x++)
+                if (_map.Get(new Vector2I(x, wallY)) == Tile.Wall)
+                    candidates.Add(new Vector2I(x, wallY));
+            if (candidates.Count == 0)
+                continue;
+
+            var wall = candidates[_rng.Next(candidates.Count)];
+            var torch = new Torch { Position = new Vector3(wall.X, 0.8f, wall.Y + 0.55f), Visible = false };
+            AddChild(torch);
+            _torches.Add((wall, torch));
+        }
     }
 
     /// <summary>
@@ -81,6 +109,10 @@ public partial class DungeonRenderer : Node3D
         // На этаже с боссом лестница — обычный пол, пока босс жив
         var stairs = _map.StairsPos;
         _stairs.Visible = _map.Get(stairs) == Tile.Stairs && _map.Explored[stairs.X, stairs.Y];
+
+        // Факел (и его свет) появляется, когда игрок увидел стену, на которой он висит
+        foreach (var (wall, torch) in _torches)
+            torch.Visible = _map.Explored[wall.X, wall.Y];
     }
 
     private Color CellColor(Vector2I cell, Color baseColor, HashSet<Vector2I> visible)

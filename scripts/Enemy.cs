@@ -82,8 +82,11 @@ public partial class Enemy : Actor
                 },
                 Position = new Vector3(0f, 0.75f, 0f),
             });
+            CreateHealthBar(1.75f);
             return;
         }
+
+        CreateHealthBar(1.05f);
 
         switch (type.Shape)
         {
