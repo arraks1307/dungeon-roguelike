@@ -67,9 +67,10 @@ public partial class Enemy : Actor
 
     /// <summary>
     /// Выбираем соседнюю клетку, которая ближе к игроку по полю расстояний.
+    /// canEnter проверяет, можно ли туда шагнуть (нет стены, не занято другим).
     /// Возвращает null, если подходящего шага нет (всё занято или путь не найден).
     /// </summary>
-    public Vector2I? ChooseStep(Dictionary<Vector2I, int> distances, Func<Vector2I, bool> isFree)
+    public Vector2I? ChooseStep(Dictionary<Vector2I, int> distances, Func<Vector2I, bool> canEnter)
     {
         if (!distances.TryGetValue(GridPos, out int bestDistance))
             return null;
@@ -78,7 +79,7 @@ public partial class Enemy : Actor
         foreach (var dir in DungeonMap.Directions)
         {
             var next = GridPos + dir;
-            if (distances.TryGetValue(next, out int distance) && distance < bestDistance && isFree(next))
+            if (distances.TryGetValue(next, out int distance) && distance < bestDistance && canEnter(next))
             {
                 bestDistance = distance;
                 best = next;

@@ -4,14 +4,14 @@ using Godot;
 namespace Roguelike;
 
 /// <summary>
-/// Игрок: читает клавиатуру и сообщает GameManager, что хочет сделать.
+/// Игрок: читает клавиши движения и сообщает GameManager, что хочет сделать.
 /// Сам ход (бой, движение, ответ врагов) обрабатывает GameManager.
+/// Остальные клавиши (Esc, R, M, колёсико) обрабатывает тоже GameManager.
 /// </summary>
 public partial class Player : Actor
 {
     /// <summary>Направление шага. Vector2I.Zero означает «пропустить ход».</summary>
     public event Action<Vector2I> ActionRequested;
-    public event Action RestartRequested;
 
     public int Level { get; private set; }
 
@@ -58,20 +58,17 @@ public partial class Player : Actor
 
         // PhysicalKeycode — физическое положение клавиши, поэтому WASD работает
         // и при русской раскладке (там на этих клавишах «ЦФЫВ»)
-        if (key.PhysicalKeycode == Key.R)
-        {
-            RestartRequested?.Invoke();
-            GetViewport().SetInputAsHandled();
-            return;
-        }
-
         Vector2I? direction = key.PhysicalKeycode switch
         {
-            Key.W or Key.Up => new Vector2I(0, -1),
-            Key.S or Key.Down => new Vector2I(0, 1),
-            Key.A or Key.Left => new Vector2I(-1, 0),
-            Key.D or Key.Right => new Vector2I(1, 0),
-            Key.Space => Vector2I.Zero,
+            Key.W or Key.Up or Key.Kp8 => new Vector2I(0, -1),
+            Key.S or Key.Down or Key.Kp2 => new Vector2I(0, 1),
+            Key.A or Key.Left or Key.Kp4 => new Vector2I(-1, 0),
+            Key.D or Key.Right or Key.Kp6 => new Vector2I(1, 0),
+            Key.Q or Key.Kp7 => new Vector2I(-1, -1),
+            Key.E or Key.Kp9 => new Vector2I(1, -1),
+            Key.Z or Key.Kp1 => new Vector2I(-1, 1),
+            Key.C or Key.Kp3 => new Vector2I(1, 1),
+            Key.Space or Key.Kp5 => Vector2I.Zero,
             _ => null,
         };
 

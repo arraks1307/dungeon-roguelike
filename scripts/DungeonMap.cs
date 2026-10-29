@@ -17,12 +17,17 @@ public enum Tile
 /// </summary>
 public class DungeonMap
 {
+    // Сначала прямые направления, потом диагонали: при равных вариантах враг выберет прямой шаг
     public static readonly Vector2I[] Directions =
     {
         new(0, -1),
         new(0, 1),
         new(-1, 0),
         new(1, 0),
+        new(-1, -1),
+        new(1, -1),
+        new(-1, 1),
+        new(1, 1),
     };
 
     public int Width { get; }
@@ -46,6 +51,23 @@ public class DungeonMap
     public Tile Get(Vector2I p) => InBounds(p) ? Tiles[p.X, p.Y] : Tile.Wall;
 
     public bool IsWalkable(Vector2I p) => Get(p) != Tile.Wall;
+
+    /// <summary>
+    /// Можно ли шагнуть из from в соседнюю клетку to. По диагонали нельзя
+    /// протиснуться между двумя стенами, которые касаются углами.
+    /// </summary>
+    public bool CanMove(Vector2I from, Vector2I to)
+    {
+        if (!IsWalkable(to))
+            return false;
+        if (from.X == to.X || from.Y == to.Y)
+            return true;
+        return IsWalkable(new Vector2I(to.X, from.Y)) || IsWalkable(new Vector2I(from.X, to.Y));
+    }
+
+    /// <summary>Клетки соседние (включая диагональ) и между ними можно пройти.</summary>
+    public bool AreAdjacent(Vector2I a, Vector2I b) =>
+        Math.Max(Math.Abs(a.X - b.X), Math.Abs(a.Y - b.Y)) == 1 && CanMove(a, b);
 
     /// <summary>
     /// Поле зрения: все клетки в радиусе, до которых есть прямая видимость.
@@ -120,7 +142,7 @@ public class DungeonMap
             foreach (var dir in Directions)
             {
                 var next = current + dir;
-                if (!IsWalkable(next) || distances.ContainsKey(next))
+                if (!CanMove(current, next) || distances.ContainsKey(next))
                     continue;
                 distances[next] = distance + 1;
                 queue.Enqueue(next);
