@@ -10,14 +10,19 @@ public enum GameState
     Menu,
     Playing,
     Inventory,
+    Shop,
     Paused,
     GameOver,
 }
 
 /// <summary>
 /// Главный скрипт игры (висит на корневом узле Main.tscn).
-/// Создаёт мир, управляет состояниями (меню, игра, инвентарь, пауза, смерть),
-/// очерёдностью ходов, предметами, этажами и рестартом.
+/// Создаёт мир, управляет состояниями, очерёдностью ходов, боем, этажами и рестартом.
+///
+/// Класс разбит на три файла с помощью partial:
+///   GameManager.cs          — ядро: состояния, ходы, бой, этажи;
+///   GameManager.Items.cs    — предметы, золото, торговец;
+///   GameManager.SelfTest.cs — режим самопроверки.
 /// </summary>
 public partial class GameManager : Node3D, IGameWorld
 {
@@ -27,15 +32,14 @@ public partial class GameManager : Node3D, IGameWorld
     private const int FovRadius = 8;
     private const int ChaseDistance = 20;
     private const int KillsPerLevel = 4;
-    private const double DropChance = 0.25;
 
     private static readonly Color DamageColor = new(1f, 0.45f, 0.4f);
     private static readonly Color GoodColor = new(0.5f, 1f, 0.5f);
     private static readonly Color InfoColor = new(1f, 0.85f, 0.4f);
+    private static readonly Color CritColor = new(1f, 0.9f, 0.2f);
 
     private readonly Random _rng = new();
     private readonly List<Enemy> _enemies = new();
-    private readonly Dictionary<Vector2I, ItemPickup> _floorItems = new();
     private HashSet<Vector2I> _visible = new();
     private Dictionary<Vector2I, int> _playerDistances = new();
     private Enemy _boss;
@@ -48,26 +52,21 @@ public partial class GameManager : Node3D, IGameWorld
     private MainMenu _mainMenu;
     private PauseMenu _pauseMenu;
     private InventoryPanel _inventoryPanel;
+    private ShopPanel _shopPanel;
     private SoundManager _sound;
     private GameState _state;
     private int _floor;
     private int _kills;
 
-    // Режим самопроверки: игра делает N случайных ходов, сохраняет скриншот и закрывается
-    private string _screenshotPath;
-    private string _screenshotView = "play";
-    private int _autoMoves;
-    private int _frame;
-    private int _startFloor = 1;
-    private bool _godMode; // только для самопроверки: игрок не может погибнуть
-
     // ---------- Реализация IGameWorld (то, что видят враги) ----------
 
     public DungeonMap Map => _map;
     public Vector2I PlayerPos => _player.GridPos;
+    public bool PlayerInvisible => _player.IsInvisible;
     public Dictionary<Vector2I, int> PlayerDistances => _playerDistances;
 
-    public bool IsOccupied(Vector2I cell) => cell == _player.GridPos || EnemyAt(cell) != null;
+    public bool IsOccupied(Vector2I cell) =>
+        cell == _player.GridPos || EnemyAt(cell) != null || (_merchant != null && _merchant.GridPos == cell);
 
     public bool IsVisibleToPlayer(Vector2I cell) => _visible.Contains(cell);
 
@@ -94,7 +93,20 @@ public partial class GameManager : Node3D, IGameWorld
         _hud.AddMessage($"{enemy.DisplayName} {verb}: -{damage}.", DamageColor);
 
         if (_player.IsDead)
+        {
             GameOver(enemy);
+            return;
+        }
+
+        // Шипы ранят того, кто ударил вплотную
+        int thorns = _player.Bonuses.Thorns;
+        if (!ranged && thorns > 0)
+        {
+            enemy.TakeDamage(thorns);
+            Effects.FloatingText(this, enemy.GridPos, thorns.ToString(), new Color(0.8f, 1f, 0.6f));
+            if (enemy.IsDead)
+                KillEnemy(enemy);
+        }
     }
 
     public void SummonMinions(Enemy summoner, int count)
@@ -118,6 +130,8 @@ public partial class GameManager : Node3D, IGameWorld
         }
     }
 
+    // ---------- Создание сцены ----------
+
     public override void _Ready()
     {
         SetupEnvironment();
@@ -140,7 +154,12 @@ public partial class GameManager : Node3D, IGameWorld
 
         _inventoryPanel = new InventoryPanel();
         AddChild(_inventoryPanel);
-        _inventoryPanel.UseRequested += UseItem;
+        _inventoryPanel.UseRequested += OnInventoryUse;
+
+        _shopPanel = new ShopPanel();
+        AddChild(_shopPanel);
+        _shopPanel.BuyRequested += BuyItem;
+        _shopPanel.SellRequested += SellItem;
 
         _mainMenu = new MainMenu();
         AddChild(_mainMenu);
@@ -162,7 +181,7 @@ public partial class GameManager : Node3D, IGameWorld
     }
 
     /// <summary>
-    /// Клавиши уровня всей игры. Движение обрабатывает Player, а здесь — Esc, R, M, I, X и колёсико.
+    /// Клавиши уровня всей игры. Движение обрабатывает Player, а здесь — Esc, R, M, I, X, 1–5 и колёсико.
     /// </summary>
     public override void _UnhandledInput(InputEvent @event)
     {
@@ -186,6 +205,7 @@ public partial class GameManager : Node3D, IGameWorld
                     case GameState.Menu: _mainMenu.GoBack(); break;
                     case GameState.Playing: Pause(); break;
                     case GameState.Inventory: CloseInventory(); break;
+                    case GameState.Shop: CloseShop(); break;
                     case GameState.Paused: Resume(); break;
                     case GameState.GameOver: ShowMainMenu(); break;
                 }
@@ -198,6 +218,9 @@ public partial class GameManager : Node3D, IGameWorld
                 break;
             case Key.X when _state == GameState.Inventory:
                 DropItem(_inventoryPanel.FocusedIndex);
+                break;
+            case >= Key.Key1 and <= Key.Key5 when _state == GameState.Playing:
+                QuickUse((int)(key.PhysicalKeycode - Key.Key1));
                 break;
             case Key.R when _state == GameState.GameOver:
                 StartNewGame();
@@ -253,6 +276,7 @@ public partial class GameManager : Node3D, IGameWorld
         _hud.Visible = false;
         _pauseMenu.Visible = false;
         _inventoryPanel.Visible = false;
+        _shopPanel.Visible = false;
         _camera.MenuMode = true;
         _camera.MenuCenter = new Vector3(MapWidth / 2f, 0f, MapHeight / 2f);
         _camera.SnapToTarget();
@@ -288,18 +312,6 @@ public partial class GameManager : Node3D, IGameWorld
         _pauseMenu.Visible = false;
     }
 
-    private void OpenInventory()
-    {
-        _state = GameState.Inventory;
-        _inventoryPanel.Open(_player.Inventory);
-    }
-
-    private void CloseInventory()
-    {
-        _state = GameState.Playing;
-        _inventoryPanel.Visible = false;
-    }
-
     private void GameOver(Enemy killer)
     {
         _state = GameState.GameOver;
@@ -321,7 +333,7 @@ public partial class GameManager : Node3D, IGameWorld
         _hud.ShowGameOver(
             $"Ты погиб на этаже {_floor}\n" +
             $"Тебя одолел: {killer.DisplayName}\n" +
-            $"Побеждено врагов: {_kills}\n" +
+            $"Побеждено врагов: {_kills}   Золото: {_player.Gold}\n" +
             placeText + "\n" +
             "R — начать заново  •  Esc — в главное меню");
     }
@@ -340,8 +352,11 @@ public partial class GameManager : Node3D, IGameWorld
         int enemyCount = Math.Min(3 + _floor * 2, 25);
         SpawnEnemies(bossFloor ? enemyCount / 2 : enemyCount);
         SpawnItems(_rng.Next(3, 6));
+        SpawnGold(_rng.Next(2, 5));
         if (bossFloor)
             SpawnBoss();
+        else if (ShouldSpawnMerchant())
+            SpawnMerchant();
 
         UpdateFov();
         UpdateHud();
@@ -349,6 +364,8 @@ public partial class GameManager : Node3D, IGameWorld
             _hud.AddMessage("Ты чувствуешь присутствие чего-то огромного... Лестница откроется после победы над боссом.", DamageColor);
         else if (_floor > 1)
             _hud.AddMessage($"Этаж {_floor}. Здесь опаснее.", InfoColor);
+        if (_merchant != null)
+            _hud.AddMessage("Где-то на этаже звенят монеты — здесь есть торговец.", InfoColor);
     }
 
     /// <summary>
@@ -381,6 +398,8 @@ public partial class GameManager : Node3D, IGameWorld
         foreach (var pickup in _floorItems.Values)
             pickup.QueueFree();
         _floorItems.Clear();
+        _merchant?.QueueFree();
+        _merchant = null;
         _boss = null;
     }
 
@@ -396,6 +415,12 @@ public partial class GameManager : Node3D, IGameWorld
             var target = _player.GridPos + direction;
             if (!_map.CanMove(_player.GridPos, target))
                 return; // упёрлись в стену — ход не тратится
+
+            if (_merchant != null && target == _merchant.GridPos)
+            {
+                OpenShop(); // разговор с торговцем не тратит ход
+                return;
+            }
 
             var enemy = EnemyAt(target);
             if (enemy != null)
@@ -419,27 +444,61 @@ public partial class GameManager : Node3D, IGameWorld
         EndPlayerTurn();
     }
 
-    /// <summary>После любого действия игрока, которое тратит ход, ходят враги.</summary>
+    /// <summary>После любого действия игрока, которое тратит ход, ходят враги и тикают эффекты.</summary>
     private void EndPlayerTurn()
     {
         EnemiesTurn();
+        if (_state == GameState.GameOver)
+            return;
+
+        var (healed, strengthEnded, invisibilityEnded) = _player.TickEffects();
+        if (healed > 0)
+            Effects.FloatingText(this, _player.GridPos, $"+{healed}", GoodColor);
+        if (strengthEnded)
+            _hud.AddMessage("Действие зелья силы закончилось.");
+        if (invisibilityEnded)
+            _hud.AddMessage("Ты снова видим.");
+
         UpdateFov();
         UpdateHud();
     }
 
     private void AttackEnemy(Enemy enemy)
     {
+        if (_player.IsInvisible)
+        {
+            _player.BreakInvisibility();
+            _hud.AddMessage("Атака выдаёт тебя — невидимость пропала.");
+        }
+
         _player.PlayAttack(enemy.GridPos);
-        int damage = RollDamage(_player, enemy);
+        var bonuses = _player.Bonuses;
+        int damage = RollDamage(_player, enemy) + bonuses.FireDamage;
+        bool crit = _rng.Next(100) < bonuses.Crit;
+        if (crit)
+            damage *= 2;
+
         enemy.TakeDamage(damage);
-        Effects.FloatingText(this, enemy.GridPos, damage.ToString(), Colors.White);
-        Effects.Burst(this, enemy.GridPos, enemy.Type.Color, 8);
+        Effects.FloatingText(this, enemy.GridPos, crit ? $"{damage}!" : damage.ToString(), crit ? CritColor : Colors.White);
+        Effects.Burst(this, enemy.GridPos, bonuses.FireDamage > 0 ? new Color(1f, 0.5f, 0.1f) : enemy.Type.Color, crit ? 16 : 8);
         _sound.Play(Sound.Hit);
+        if (crit)
+            _camera.Shake(0.08f);
+
+        // Вампиризм: лечимся за каждый удар
+        if (bonuses.Lifesteal > 0 && _player.IsHurt)
+        {
+            int before = _player.Hp;
+            _player.Heal(bonuses.Lifesteal);
+            Effects.FloatingText(this, _player.GridPos, $"+{_player.Hp - before}", GoodColor);
+        }
 
         if (enemy.IsDead)
             KillEnemy(enemy);
         else
-            _hud.AddMessage($"{enemy.DisplayName} получает {damage} урона.");
+            _hud.AddMessage(crit
+                ? $"Критический удар! {enemy.DisplayName} получает {damage} урона."
+                : $"{enemy.DisplayName} получает {damage} урона.");
     }
 
     private void KillEnemy(Enemy enemy)
@@ -452,21 +511,9 @@ public partial class GameManager : Node3D, IGameWorld
         _sound.Play(Sound.Kill);
 
         if (enemy == _boss)
-        {
-            _boss = null;
-            var stairs = _map.StairsPos;
-            _map.Tiles[stairs.X, stairs.Y] = Tile.Stairs;
-            _hud.AddMessage("Босс повержен! Путь вниз открыт.", InfoColor);
-            // Награда: предмет как будто с более глубокого этажа
-            var dropCell = _floorItems.ContainsKey(enemy.GridPos) || enemy.GridPos == stairs ? _player.GridPos : enemy.GridPos;
-            if (!_floorItems.ContainsKey(dropCell))
-                PlaceItem(ItemCatalog.Roll(_rng, _floor + 2), dropCell);
-        }
-        else if (_rng.NextDouble() < DropChance && !_floorItems.ContainsKey(enemy.GridPos))
-        {
-            PlaceItem(ItemCatalog.Roll(_rng, _floor), enemy.GridPos);
-            _hud.AddMessage($"{enemy.DisplayName} что-то роняет.");
-        }
+            OnBossKilled(enemy);
+        else
+            DropLoot(enemy);
 
         if (_kills % KillsPerLevel == 0)
         {
@@ -478,125 +525,19 @@ public partial class GameManager : Node3D, IGameWorld
         }
     }
 
-    // ---------- Предметы ----------
-
-    private void TryPickUpItem(Vector2I cell)
+    private void OnBossKilled(Enemy boss)
     {
-        if (!_floorItems.TryGetValue(cell, out var pickup))
-            return;
+        _boss = null;
+        var stairs = _map.StairsPos;
+        _map.Tiles[stairs.X, stairs.Y] = Tile.Stairs;
+        _hud.AddMessage("Босс повержен! Путь вниз открыт.", InfoColor);
 
-        if (!_player.Inventory.TryAdd(pickup.Item))
-        {
-            _hud.AddMessage($"Здесь лежит: {pickup.Item.Name}. Но сумка полна!", DamageColor);
-            return;
-        }
-        _floorItems.Remove(cell);
-        pickup.QueueFree();
-        _hud.AddMessage($"Ты подбираешь: {pickup.Item.Name}.", GoodColor);
-        _sound.Play(Sound.Pickup);
-    }
-
-    private void PlaceItem(Item item, Vector2I cell)
-    {
-        var pickup = ItemPickup.Create(item, cell);
-        AddChild(pickup);
-        _floorItems[cell] = pickup;
-    }
-
-    /// <summary>Применить или надеть предмет из сумки. Тратит ход.</summary>
-    private void UseItem(int index)
-    {
-        var inventory = _player.Inventory;
-        if (_state != GameState.Inventory || index < 0 || index >= inventory.Items.Count)
-            return;
-
-        var item = inventory.Items[index];
-        switch (item.Kind)
-        {
-            case ItemKind.Weapon:
-                _player.Equip(index);
-                _hud.AddMessage($"Ты берёшь в руки: {item.Name}.", InfoColor);
-                _sound.Play(Sound.Equip);
-                break;
-
-            case ItemKind.Armor:
-                _player.Equip(index);
-                _hud.AddMessage($"Ты надеваешь: {item.Name}.", InfoColor);
-                _sound.Play(Sound.Equip);
-                break;
-
-            case ItemKind.HealthPotion:
-                if (!_player.IsHurt)
-                {
-                    _hud.AddMessage("Ты и так полностью здоров.");
-                    return; // ход не тратим, окно не закрываем
-                }
-                inventory.Items.RemoveAt(index);
-                _player.Heal(item.Power);
-                _hud.AddMessage($"Ты выпиваешь {item.Name}: +{item.Power} здоровья.", GoodColor);
-                Effects.FloatingText(this, _player.GridPos, $"+{item.Power}", GoodColor);
-                Effects.Burst(this, _player.GridPos, GoodColor, 12);
-                _sound.Play(Sound.Heal);
-                break;
-
-            case ItemKind.TeleportScroll:
-                if (!TryFindFreeCell(out var destination, includeStartRoom: true))
-                    return;
-                inventory.Items.RemoveAt(index);
-                Effects.Burst(this, _player.GridPos, item.Color, 20);
-                _player.Teleport(destination);
-                Effects.Burst(this, destination, item.Color, 20);
-                _camera.SnapToTarget();
-                _hud.AddMessage("Вспышка — и ты в другом месте!", InfoColor);
-                _sound.Play(Sound.Teleport);
-                break;
-
-            case ItemKind.FireScroll:
-                var targets = _enemies.Where(enemy => _visible.Contains(enemy.GridPos)).ToList();
-                if (targets.Count == 0)
-                {
-                    _hud.AddMessage("Рядом нет врагов — свиток лучше поберечь.");
-                    return;
-                }
-                inventory.Items.RemoveAt(index);
-                int damage = item.Power + _floor;
-                _hud.AddMessage($"Огненная волна! Все видимые враги получают {damage} урона.", InfoColor);
-                _sound.Play(Sound.Fire);
-                _camera.Shake(0.2f);
-                foreach (var enemy in targets)
-                {
-                    enemy.TakeDamage(damage);
-                    Effects.FloatingText(this, enemy.GridPos, damage.ToString(), item.Color);
-                    Effects.Burst(this, enemy.GridPos, item.Color, 24);
-                    if (enemy.IsDead)
-                        KillEnemy(enemy);
-                }
-                break;
-        }
-
-        CloseInventory();
-        EndPlayerTurn();
-    }
-
-    /// <summary>Выбросить предмет под ноги. Не тратит ход.</summary>
-    private void DropItem(int index)
-    {
-        var inventory = _player.Inventory;
-        if (index < 0 || index >= inventory.Items.Count)
-            return;
-        if (_floorItems.ContainsKey(_player.GridPos))
-        {
-            _hud.AddMessage("Здесь уже что-то лежит.");
-            return;
-        }
-
-        var item = inventory.Items[index];
-        inventory.Items.RemoveAt(index);
-        PlaceItem(item, _player.GridPos);
-        _hud.AddMessage($"Ты выбрасываешь: {item.Name}.");
-        _inventoryPanel.Refresh(inventory, index);
-        UpdateFov();
-        UpdateHud();
+        // Награда: предмет как будто с более глубокого этажа и много золота
+        var dropCell = boss.GridPos == stairs ? _player.GridPos : boss.GridPos;
+        if (!_floorItems.ContainsKey(dropCell))
+            PlaceItem(ItemCatalog.Roll(_rng, _floor + 3), dropCell);
+        _player.Gold += 50 + _floor * 10;
+        _hud.AddMessage($"Ты забираешь сокровища короля: +{50 + _floor * 10} золота.", InfoColor);
     }
 
     // ---------- Ход врагов ----------
@@ -612,11 +553,13 @@ public partial class GameManager : Node3D, IGameWorld
         {
             if (_state != GameState.Playing)
                 return; // игрок погиб — остальные враги уже не ходят
+            if (enemy.IsDead)
+                continue; // погиб от шипов в этот же ход
             enemy.TakeTurn(this);
         }
     }
 
-    // ---------- Появление врагов и предметов ----------
+    // ---------- Появление врагов ----------
 
     private void SpawnEnemies(int count)
     {
@@ -640,13 +583,6 @@ public partial class GameManager : Node3D, IGameWorld
         return enemy;
     }
 
-    private void SpawnItems(int count)
-    {
-        for (int i = 0; i < count; i++)
-            if (TryFindFreeCell(out var cell))
-                PlaceItem(ItemCatalog.Roll(_rng, _floor), cell);
-    }
-
     /// <summary>Случайная свободная клетка пола в комнате (по умолчанию — не в стартовой).</summary>
     private bool TryFindFreeCell(out Vector2I cell, bool includeStartRoom = false)
     {
@@ -668,7 +604,7 @@ public partial class GameManager : Node3D, IGameWorld
 
     private void UpdateFov()
     {
-        _visible = _map.ComputeFov(_player.GridPos, FovRadius);
+        _visible = _map.ComputeFov(_player.GridPos, FovRadius + _player.Bonuses.Vision);
         foreach (var cell in _visible)
             _map.Explored[cell.X, cell.Y] = true;
 
@@ -677,10 +613,14 @@ public partial class GameManager : Node3D, IGameWorld
             enemy.Visible = _visible.Contains(enemy.GridPos);
         foreach (var (cell, pickup) in _floorItems)
             pickup.Visible = _map.Explored[cell.X, cell.Y];
+        if (_merchant != null)
+            _merchant.Visible = _map.Explored[_merchant.GridPos.X, _merchant.GridPos.Y];
 
         var visibleEnemies = _enemies.Where(enemy => enemy.Visible).Select(enemy => enemy.GridPos).ToList();
-        var items = _floorItems.Select(pair => (pair.Key, pair.Value.Item.Color)).ToList();
-        _hud.UpdateMinimap(_map, _visible, _player.GridPos, visibleEnemies, items);
+        var markers = _floorItems.Select(pair => (pair.Key, pair.Value.MapColor)).ToList();
+        if (_merchant != null && _merchant.Visible)
+            markers.Add((_merchant.GridPos, new Color(0.7f, 0.4f, 1f)));
+        _hud.UpdateMinimap(_map, _visible, _player.GridPos, visibleEnemies, markers);
     }
 
     private void UpdateHud()
@@ -694,96 +634,4 @@ public partial class GameManager : Node3D, IGameWorld
     /// <summary>Урон = атака ± 1 минус защита цели, но не меньше 1.</summary>
     private int RollDamage(Actor attacker, Actor defender) =>
         Math.Max(1, attacker.Attack + _rng.Next(-1, 2) - defender.Defense);
-
-    private void ParseCommandLine()
-    {
-        // Аргументы после «--» в командной строке Godot, например:
-        // -- --screenshot=shot.png --moves=40 --view=pause
-        foreach (var arg in OS.GetCmdlineUserArgs())
-        {
-            if (arg.StartsWith("--screenshot="))
-                _screenshotPath = arg["--screenshot=".Length..];
-            else if (arg.StartsWith("--moves="))
-                _autoMoves = int.Parse(arg["--moves=".Length..]);
-            else if (arg.StartsWith("--view="))
-                _screenshotView = arg["--view=".Length..];
-            else if (arg == "--god")
-                _godMode = true;
-            else if (arg.StartsWith("--start-floor="))
-                _startFloor = int.Parse(arg["--start-floor=".Length..]);
-        }
-    }
-
-    /// <summary>
-    /// --view=menu — снимок главного меню, scores — таблицы рекордов,
-    /// pause / inventory — паузы или инвентаря после ходов, play (по умолчанию) — просто игры.
-    /// Во время случайных ходов иногда применяется первый предмет из сумки — так проверяются предметы.
-    /// </summary>
-    private void RunSelfTest()
-    {
-        _frame++;
-        bool inMenu = _screenshotView is "menu" or "scores";
-
-        if (_frame == 1)
-        {
-            if (_screenshotView == "scores")
-                _mainMenu.ShowScores();
-            else if (!inMenu)
-                StartNewGame();
-        }
-
-        int moveFrames = inMenu ? 0 : _autoMoves * 3;
-        if (_frame <= moveFrames)
-        {
-            if (_frame % 3 == 0)
-                OnPlayerAction(AutoPilotDirection());
-            if (_frame % 30 == 0 && _state == GameState.Playing && _player.Inventory.Items.Count > 0)
-            {
-                OpenInventory();
-                UseItem(_rng.Next(_player.Inventory.Items.Count));
-                if (_state == GameState.Inventory)
-                    CloseInventory();
-            }
-            return;
-        }
-
-        if (_frame == moveFrames + 1 && _state == GameState.Playing)
-        {
-            if (_screenshotView == "pause")
-                Pause();
-            else if (_screenshotView == "inventory")
-                OpenInventory();
-        }
-
-        if (_frame == moveFrames + 40)
-        {
-            GD.Print($"Самопроверка: этаж {_floor}, убито {_kills}, здоровье {_player.Hp}, состояние {_state}");
-            GetViewport().GetTexture().GetImage().SavePng(_screenshotPath);
-            GetTree().Quit();
-        }
-    }
-
-    /// <summary>Автопилот для самопроверки: чаще идёт к лестнице, иногда шагает случайно.</summary>
-    private Vector2I AutoPilotDirection()
-    {
-        var randomDirection = DungeonMap.Directions[_rng.Next(DungeonMap.Directions.Length)];
-        if (_rng.NextDouble() < 0.3)
-            return randomDirection;
-
-        var distances = _map.DistanceField(_map.StairsPos, MapWidth * MapHeight);
-        if (!distances.TryGetValue(_player.GridPos, out int best))
-            return randomDirection;
-
-        var result = randomDirection;
-        foreach (var direction in DungeonMap.Directions)
-        {
-            var next = _player.GridPos + direction;
-            if (distances.TryGetValue(next, out int distance) && distance < best && _map.CanMove(_player.GridPos, next))
-            {
-                best = distance;
-                result = direction;
-            }
-        }
-        return result;
-    }
 }

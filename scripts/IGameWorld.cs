@@ -12,6 +12,7 @@ public interface IGameWorld
 {
     DungeonMap Map { get; }
     Vector2I PlayerPos { get; }
+    bool PlayerInvisible { get; }
 
     /// <summary>Сколько шагов от каждой клетки до игрока (поиск в ширину, считается раз за ход).</summary>
     Dictionary<Vector2I, int> PlayerDistances { get; }

@@ -30,6 +30,9 @@ public partial class Actor : Node3D
     private Node3D _healthBar;
     private MeshInstance3D _healthFill;
 
+    /// <summary>Цвет, к которому тело возвращается после вспышки урона (заморозка, невидимость меняют его).</summary>
+    protected virtual Color DisplayColor => BaseColor;
+
     public static Vector3 GridToWorld(Vector2I p) => new(p.X, 0f, p.Y);
 
     protected void CreateBody(PrimitiveMesh mesh, Color color, float height)
@@ -124,7 +127,7 @@ public partial class Actor : Node3D
         UpdateHealthBar();
         // Вспышка белым и плавный возврат к обычному цвету
         BodyMaterial.AlbedoColor = Colors.White;
-        CreateTween().TweenProperty(BodyMaterial, "albedo_color", BaseColor, 0.25f);
+        CreateTween().TweenProperty(BodyMaterial, "albedo_color", DisplayColor, 0.25f);
     }
 
     /// <summary>Сжимаемся в точку и удаляем узел из сцены.</summary>

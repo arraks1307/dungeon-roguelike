@@ -15,6 +15,8 @@ public partial class Hud : CanvasLayer
     private ProgressBar _hpBar;
     private Label _infoLabel;
     private Label _gearLabel;
+    private Label _effectsLabel;
+    private HBoxContainer _hotbar;
     private Minimap _minimap;
     private VBoxContainer _log;
     private VBoxContainer _bossBox;
@@ -63,6 +65,10 @@ public partial class Hud : CanvasLayer
         _gearLabel.Modulate = new Color(1f, 1f, 1f, 0.8f);
         stats.AddChild(_gearLabel);
 
+        _effectsLabel = Ui.CreateLabel(16);
+        _effectsLabel.AddThemeColorOverride("font_color", new Color(0.6f, 0.9f, 1f));
+        stats.AddChild(_effectsLabel);
+
         // Пустой растягивающийся элемент отодвигает мини-карту к правому краю
         topRow.AddChild(new Control
         {
@@ -85,9 +91,20 @@ public partial class Hud : CanvasLayer
 
         var help = Ui.CreateLabel(14,
             "WASD / стрелки — ход и атака  •  Q E Z C — диагонали  •  Пробел — ждать  •  " +
-            "I — инвентарь  •  Колёсико — зум  •  M — карта  •  Esc — пауза");
+            "I — инвентарь  •  1–5 — слоты  •  Колёсико — зум  •  M — карта  •  Esc — пауза");
         help.Modulate = new Color(1f, 1f, 1f, 0.6f);
         column.AddChild(help);
+
+        // Быстрые слоты в правом нижнем углу: якоря справа снизу, растут влево
+        _hotbar = new HBoxContainer
+        {
+            AnchorLeft = 1f, AnchorRight = 1f, AnchorTop = 1f, AnchorBottom = 1f,
+            OffsetLeft = -400f, OffsetRight = -16f, OffsetTop = -96f, OffsetBottom = -36f,
+            Alignment = BoxContainer.AlignmentMode.End,
+            MouseFilter = Control.MouseFilterEnum.Ignore,
+        };
+        _hotbar.AddThemeConstantOverride("separation", 6);
+        AddChild(_hotbar);
 
         // Полоска здоровья босса по центру сверху: якоря на середине, отступы ±220 пикселей
         _bossBox = new VBoxContainer
@@ -132,9 +149,60 @@ public partial class Hud : CanvasLayer
         _hpBar.Value = player.Hp;
         _infoLabel.Text = $"Этаж: {floor}   Уровень: {player.Level}   Атака: {player.Attack}   " +
                           $"Защита: {player.Defense}   Побеждено: {kills}";
-        var inventory = player.Inventory;
-        _gearLabel.Text = $"Оружие: {inventory.Weapon?.Name ?? "нет"}   Броня: {inventory.Armor?.Name ?? "нет"}   " +
-                          $"Сумка: {inventory.Items.Count}/{Inventory.Capacity}";
+        _gearLabel.Text = $"Золото: {player.Gold}   Сумка: {player.Inventory.Items.Count}/{Inventory.Capacity}   " +
+                          $"Оружие: {player.Inventory.GetEquipped(EquipSlot.Weapon)?.Name ?? "нет"}";
+
+        var effects = new List<string>();
+        if (player.StrengthTurns > 0)
+            effects.Add($"Сила ({player.StrengthTurns})");
+        if (player.IsInvisible)
+            effects.Add($"Невидимость ({player.InvisibleTurns})");
+        _effectsLabel.Text = effects.Count > 0 ? "Эффекты: " + string.Join(", ", effects) : "";
+
+        UpdateHotbar(player.Inventory);
+    }
+
+    /// <summary>Пять быстрых слотов: первые пять ячеек сумки, срабатывают клавишами 1–5.</summary>
+    private void UpdateHotbar(Inventory inventory)
+    {
+        foreach (Node child in _hotbar.GetChildren())
+        {
+            _hotbar.RemoveChild(child);
+            child.QueueFree();
+        }
+
+        for (int i = 0; i < 5; i++)
+        {
+            var item = i < inventory.Items.Count ? inventory.Items[i] : null;
+            var style = new StyleBoxFlat
+            {
+                BgColor = new Color(0f, 0f, 0f, 0.55f),
+                BorderColor = item?.RarityColor ?? new Color(1f, 1f, 1f, 0.15f),
+            };
+            style.SetBorderWidthAll(2);
+            style.SetCornerRadiusAll(4);
+
+            var slot = new PanelContainer { CustomMinimumSize = new Vector2(64f, 58f), MouseFilter = Control.MouseFilterEnum.Ignore };
+            slot.AddThemeStyleboxOverride("panel", style);
+            _hotbar.AddChild(slot);
+
+            var content = new VBoxContainer { Alignment = BoxContainer.AlignmentMode.Center, MouseFilter = Control.MouseFilterEnum.Ignore };
+            content.AddThemeConstantOverride("separation", 0);
+            slot.AddChild(content);
+
+            if (item != null)
+            {
+                content.AddChild(new TextureRect
+                {
+                    Texture = ItemIcons.Get(item),
+                    StretchMode = TextureRect.StretchModeEnum.KeepCentered,
+                    MouseFilter = Control.MouseFilterEnum.Ignore,
+                });
+            }
+            var caption = Ui.CreateLabel(13, item == null ? $"{i + 1}" : item.Count > 1 ? $"{i + 1}  ×{item.Count}" : $"{i + 1}");
+            caption.HorizontalAlignment = HorizontalAlignment.Center;
+            content.AddChild(caption);
+        }
     }
 
     /// <summary>Показывает полоску босса, если он есть и уже заметил игрока.</summary>

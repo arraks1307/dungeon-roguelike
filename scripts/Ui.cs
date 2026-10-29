@@ -28,6 +28,34 @@ public static class Ui
     }
 
     /// <summary>
+    /// Кнопка-предмет: иконка, текст цвета редкости. onFocused вызывается, когда кнопку выбрали
+    /// стрелками или навели мышью, — так окна показывают подробности о предмете.
+    /// </summary>
+    public static Button CreateItemButton(Item item, string text, Action onPressed, Action onFocused)
+    {
+        var button = CreateButton(text, onPressed);
+        button.Icon = ItemIcons.Get(item);
+        button.Alignment = HorizontalAlignment.Left;
+        button.CustomMinimumSize = new Vector2(380f, 38f);
+        button.AddThemeFontSizeOverride("font_size", 17);
+        button.AddThemeColorOverride("font_color", item.RarityColor);
+        button.AddThemeColorOverride("font_focus_color", item.RarityColor.Lightened(0.3f));
+        button.AddThemeColorOverride("font_hover_color", item.RarityColor.Lightened(0.3f));
+        button.FocusEntered += onFocused;
+        button.MouseEntered += () => button.GrabFocus();
+        return button;
+    }
+
+    /// <summary>Многострочная надпись с переносом слов для описаний.</summary>
+    public static Label CreateWrappedLabel(int fontSize, float width)
+    {
+        var label = CreateLabel(fontSize);
+        label.AutowrapMode = TextServer.AutowrapMode.WordSmart;
+        label.CustomMinimumSize = new Vector2(width, 0f);
+        return label;
+    }
+
+    /// <summary>
     /// Полупрозрачное затемнение на весь экран с колонкой по центру.
     /// Возвращает колонку, в которую добавляются заголовки и кнопки.
     /// </summary>

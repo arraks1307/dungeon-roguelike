@@ -5,25 +5,42 @@ namespace Roguelike;
 
 /// <summary>
 /// Игрок: читает клавиши движения и сообщает GameManager, что хочет сделать.
-/// Сам ход (бой, движение, ответ врагов) обрабатывает GameManager.
-/// Остальные клавиши (Esc, R, M, колёсико) обрабатывает тоже GameManager.
+/// Хранит характеристики, инвентарь, золото и временные эффекты зелий.
+/// Остальные клавиши (Esc, R, M, I, 1–5, колёсико) обрабатывает GameManager.
 /// </summary>
 public partial class Player : Actor
 {
+    private const int RegenInterval = 5; // регенерация срабатывает раз в столько ходов
+    private const float InvisibleAlpha = 0.3f;
+
     /// <summary>Направление шага. Vector2I.Zero означает «пропустить ход».</summary>
     public event Action<Vector2I> ActionRequested;
 
     public int Level { get; private set; }
+    public int Gold { get; set; }
     public Inventory Inventory { get; } = new();
+
+    /// <summary>Сумма бонусов всей надетой экипировки.</summary>
+    public Stats Bonuses { get; private set; }
+
+    public int StrengthTurns { get; private set; }
+    public int InvisibleTurns { get; private set; }
+    public bool IsInvisible => InvisibleTurns > 0;
     public bool IsHurt => Hp < MaxHp;
 
-    // Атака без оружия: растёт с уровнем, оружие добавляет к ней бонус
+    // Базовые значения без экипировки: растут с уровнем
     private int _baseAttack;
+    private int _baseMaxHp;
+    private int _strengthBonus;
+    private int _turnCounter;
+
+    protected override Color DisplayColor => IsInvisible ? new Color(BaseColor, InvisibleAlpha) : BaseColor;
 
     public override void _Ready()
     {
         DisplayName = "Ты";
         CreateBody(new CapsuleMesh { Radius = 0.25f, Height = 0.9f }, new Color(0.3f, 0.55f, 1f), 0.45f);
+        BodyMaterial.Transparency = BaseMaterial3D.TransparencyEnum.Alpha; // для невидимости
 
         // «Факел» — тёплый точечный свет, который двигается вместе с игроком
         AddChild(new OmniLight3D
@@ -41,55 +58,98 @@ public partial class Player : Actor
     public void ResetStats()
     {
         Level = 1;
-        MaxHp = 30;
-        Hp = MaxHp;
+        Gold = 0;
         _baseAttack = 3;
+        _baseMaxHp = 30;
+        StrengthTurns = 0;
+        InvisibleTurns = 0;
+        _turnCounter = 0;
+        BodyMaterial.AlbedoColor = DisplayColor;
 
         // Стартовый набор: кинжал в руках и одно зелье в сумке
         Inventory.Clear();
-        Inventory.Weapon = ItemCatalog.Dagger;
-        Inventory.TryAdd(ItemCatalog.HealthPotion);
+        Inventory.TryAdd(new Item(ItemCatalog.Dagger));
+        Inventory.Equip(0);
+        Inventory.TryAdd(new Item(ItemCatalog.HealthPotion));
+
         RecalculateStats();
+        Hp = MaxHp;
     }
 
     public void LevelUp()
     {
         Level++;
-        MaxHp += 5;
-        Hp = Mathf.Min(Hp + 5, MaxHp);
+        _baseMaxHp += 5;
         _baseAttack++;
+        RecalculateStats();
+        Heal(5);
+    }
+
+    public void Heal(int amount) => Hp = Mathf.Min(Hp + amount, MaxHp);
+
+    public void Equip(int index)
+    {
+        Inventory.Equip(index);
         RecalculateStats();
     }
 
-    /// <summary>
-    /// Надеть предмет из сумки. Снятый предмет встаёт на его место в сумке,
-    /// поэтому для обмена не нужно свободное место.
-    /// </summary>
-    public void Equip(int index)
+    public void ApplyStrength(int bonus)
     {
-        var item = Inventory.Items[index];
-        var previous = item.Kind == ItemKind.Weapon ? Inventory.Weapon : Inventory.Armor;
-
-        if (item.Kind == ItemKind.Weapon)
-            Inventory.Weapon = item;
-        else
-            Inventory.Armor = item;
-
-        if (previous != null)
-            Inventory.Items[index] = previous;
-        else
-            Inventory.Items.RemoveAt(index);
-
+        _strengthBonus = bonus;
+        StrengthTurns = ItemCatalog.BuffDuration;
         RecalculateStats();
+    }
+
+    public void ApplyInvisibility(int turns)
+    {
+        InvisibleTurns = turns;
+        BodyMaterial.AlbedoColor = DisplayColor;
+    }
+
+    public void BreakInvisibility()
+    {
+        InvisibleTurns = 0;
+        BodyMaterial.AlbedoColor = DisplayColor;
+    }
+
+    /// <summary>
+    /// Вызывается в конце каждого хода: отсчитывает эффекты зелий и регенерацию.
+    /// Возвращает, сколько здоровья восстановилось и какие эффекты закончились.
+    /// </summary>
+    public (int Healed, bool StrengthEnded, bool InvisibilityEnded) TickEffects()
+    {
+        _turnCounter++;
+        int healed = 0;
+        if (Bonuses.Regen > 0 && IsHurt && _turnCounter % RegenInterval == 0)
+        {
+            int before = Hp;
+            Heal(Bonuses.Regen);
+            healed = Hp - before;
+        }
+
+        bool strengthEnded = StrengthTurns > 0 && --StrengthTurns == 0;
+        if (strengthEnded)
+            RecalculateStats();
+
+        bool invisibilityEnded = InvisibleTurns > 0 && --InvisibleTurns == 0;
+        if (invisibilityEnded)
+            BodyMaterial.AlbedoColor = DisplayColor;
+
+        return (healed, strengthEnded, invisibilityEnded);
     }
 
     private void RecalculateStats()
     {
-        Attack = _baseAttack + (Inventory.Weapon?.Power ?? 0);
-        Defense = Inventory.Armor?.Power ?? 0;
-    }
+        var total = new Stats();
+        foreach (var item in Inventory.Equipped)
+            total += item.Stats;
+        Bonuses = total;
 
-    public void Heal(int amount) => Hp = Mathf.Min(Hp + amount, MaxHp);
+        Attack = _baseAttack + Bonuses.Attack + (StrengthTurns > 0 ? _strengthBonus : 0);
+        Defense = Bonuses.Defense;
+        MaxHp = _baseMaxHp + Bonuses.MaxHp;
+        Hp = Mathf.Min(Hp, MaxHp); // сняли амулет жизни — здоровье не может быть выше максимума
+    }
 
     public override void _UnhandledInput(InputEvent @event)
     {

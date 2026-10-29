@@ -52,8 +52,23 @@ public partial class Enemy : Actor
     /// <summary>Заметил ли враг игрока. Пока не заметил — стоит на месте.</summary>
     public bool Alerted { get; set; }
 
+    private static readonly Color IceColor = new(0.55f, 0.85f, 1f);
+
+    /// <summary>Сколько ходов враг ещё заморожен (свиток холода).</summary>
+    public int FrozenTurns { get; private set; }
+
     private bool _restingThisTurn;
     private int _turnsTaken;
+
+    protected override Color DisplayColor => FrozenTurns > 0
+        ? new Color(BaseColor.Lerp(IceColor, 0.7f), BaseColor.A)
+        : BaseColor;
+
+    public void Freeze(int turns)
+    {
+        FrozenTurns = turns;
+        BodyMaterial.AlbedoColor = DisplayColor;
+    }
 
     public void Setup(EnemyType type, int floor)
     {
@@ -124,6 +139,19 @@ public partial class Enemy : Actor
 
     public void TakeTurn(IGameWorld world)
     {
+        if (FrozenTurns > 0)
+        {
+            if (--FrozenTurns == 0)
+                BodyMaterial.AlbedoColor = DisplayColor; // оттаял
+            return;
+        }
+
+        if (world.PlayerInvisible)
+        {
+            Alerted = false; // теряет игрока из виду и стоит на месте
+            return;
+        }
+
         int stepsToPlayer = StepsBetween(GridPos, world.PlayerPos);
         if (world.IsVisibleToPlayer(GridPos))
             Alerted = true;
