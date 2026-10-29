@@ -15,15 +15,15 @@ public enum EnemyShape
 /// Описание вида врага. record — это класс-«запись» с готовым конструктором,
 /// удобен для неизменяемых данных.
 /// </summary>
-public record EnemyType(string Name, int Hp, int Attack, Color Color, EnemyShape Shape, bool Slow, int MinFloor);
+public record EnemyType(string Name, int Hp, int Attack, int Defense, Color Color, EnemyShape Shape, bool Slow, int MinFloor);
 
 public partial class Enemy : Actor
 {
     public static readonly EnemyType[] Types =
     {
-        new("Слизень", 6, 2, new Color(0.4f, 0.85f, 0.3f), EnemyShape.Sphere, Slow: true, MinFloor: 1),
-        new("Гоблин", 10, 3, new Color(0.85f, 0.7f, 0.25f), EnemyShape.Capsule, Slow: false, MinFloor: 1),
-        new("Орк", 18, 5, new Color(0.85f, 0.25f, 0.2f), EnemyShape.Box, Slow: false, MinFloor: 3),
+        new("Слизень", 6, 2, 0, new Color(0.4f, 0.85f, 0.3f), EnemyShape.Sphere, Slow: true, MinFloor: 1),
+        new("Гоблин", 10, 3, 0, new Color(0.85f, 0.7f, 0.25f), EnemyShape.Capsule, Slow: false, MinFloor: 1),
+        new("Орк", 18, 5, 1, new Color(0.85f, 0.25f, 0.2f), EnemyShape.Box, Slow: false, MinFloor: 3),
     };
 
     public EnemyType Type { get; private set; }
@@ -41,6 +41,7 @@ public partial class Enemy : Actor
         MaxHp = type.Hp + (floor - 1) * 2;
         Hp = MaxHp;
         Attack = type.Attack + (floor - 1) / 2;
+        Defense = type.Defense;
 
         switch (type.Shape)
         {

@@ -15,7 +15,6 @@ public partial class Minimap : Control
     private static readonly Color SeenFloorColor = new(0.35f, 0.35f, 0.4f);
     private static readonly Color VisibleFloorColor = new(0.7f, 0.65f, 0.6f);
     private static readonly Color StairsColor = new(1f, 0.8f, 0.25f);
-    private static readonly Color PotionColor = new(1f, 0.3f, 0.6f);
     private static readonly Color EnemyColor = new(1f, 0.25f, 0.2f);
     private static readonly Color PlayerColor = new(0.4f, 0.7f, 1f);
 
@@ -23,7 +22,7 @@ public partial class Minimap : Control
     private HashSet<Vector2I> _visible = new();
     private Vector2I _player;
     private List<Vector2I> _enemies = new();
-    private List<Vector2I> _items = new();
+    private List<(Vector2I Cell, Color Color)> _items = new();
 
     public Minimap()
     {
@@ -31,7 +30,7 @@ public partial class Minimap : Control
     }
 
     public void UpdateData(DungeonMap map, HashSet<Vector2I> visible, Vector2I player,
-        List<Vector2I> visibleEnemies, List<Vector2I> items)
+        List<Vector2I> visibleEnemies, List<(Vector2I Cell, Color Color)> items)
     {
         _map = map;
         _visible = visible;
@@ -64,9 +63,9 @@ public partial class Minimap : Control
             }
         }
 
-        foreach (var item in _items)
-            if (_map.Explored[item.X, item.Y])
-                DrawCell(item, PotionColor);
+        foreach (var (cell, color) in _items)
+            if (_map.Explored[cell.X, cell.Y])
+                DrawCell(cell, color);
         foreach (var enemy in _enemies)
             DrawCell(enemy, EnemyColor);
 

@@ -14,6 +14,11 @@ public partial class Player : Actor
     public event Action<Vector2I> ActionRequested;
 
     public int Level { get; private set; }
+    public Inventory Inventory { get; } = new();
+    public bool IsHurt => Hp < MaxHp;
+
+    // Атака без оружия: растёт с уровнем, оружие добавляет к ней бонус
+    private int _baseAttack;
 
     public override void _Ready()
     {
@@ -38,7 +43,13 @@ public partial class Player : Actor
         Level = 1;
         MaxHp = 30;
         Hp = MaxHp;
-        Attack = 5;
+        _baseAttack = 3;
+
+        // Стартовый набор: кинжал в руках и одно зелье в сумке
+        Inventory.Clear();
+        Inventory.Weapon = ItemCatalog.Dagger;
+        Inventory.TryAdd(ItemCatalog.HealthPotion);
+        RecalculateStats();
     }
 
     public void LevelUp()
@@ -46,7 +57,36 @@ public partial class Player : Actor
         Level++;
         MaxHp += 5;
         Hp = Mathf.Min(Hp + 5, MaxHp);
-        Attack += 1;
+        _baseAttack++;
+        RecalculateStats();
+    }
+
+    /// <summary>
+    /// Надеть предмет из сумки. Снятый предмет встаёт на его место в сумке,
+    /// поэтому для обмена не нужно свободное место.
+    /// </summary>
+    public void Equip(int index)
+    {
+        var item = Inventory.Items[index];
+        var previous = item.Kind == ItemKind.Weapon ? Inventory.Weapon : Inventory.Armor;
+
+        if (item.Kind == ItemKind.Weapon)
+            Inventory.Weapon = item;
+        else
+            Inventory.Armor = item;
+
+        if (previous != null)
+            Inventory.Items[index] = previous;
+        else
+            Inventory.Items.RemoveAt(index);
+
+        RecalculateStats();
+    }
+
+    private void RecalculateStats()
+    {
+        Attack = _baseAttack + (Inventory.Weapon?.Power ?? 0);
+        Defense = Inventory.Armor?.Power ?? 0;
     }
 
     public void Heal(int amount) => Hp = Mathf.Min(Hp + amount, MaxHp);

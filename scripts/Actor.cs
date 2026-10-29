@@ -14,6 +14,7 @@ public partial class Actor : Node3D
     public int MaxHp { get; protected set; }
     public int Hp { get; protected set; }
     public int Attack { get; protected set; }
+    public int Defense { get; protected set; }
     public Vector2I GridPos { get; private set; }
     public bool IsDead => Hp <= 0;
 

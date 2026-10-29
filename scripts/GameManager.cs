@@ -9,14 +9,15 @@ public enum GameState
 {
     Menu,
     Playing,
+    Inventory,
     Paused,
     GameOver,
 }
 
 /// <summary>
 /// Главный скрипт игры (висит на корневом узле Main.tscn).
-/// Создаёт мир, управляет состояниями (меню, игра, пауза, смерть),
-/// очерёдностью ходов, этажами и рестартом.
+/// Создаёт мир, управляет состояниями (меню, игра, инвентарь, пауза, смерть),
+/// очерёдностью ходов, предметами, этажами и рестартом.
 /// </summary>
 public partial class GameManager : Node3D
 {
@@ -24,8 +25,8 @@ public partial class GameManager : Node3D
     private const int MapHeight = 32;
     private const int FovRadius = 8;
     private const int ChaseDistance = 20;
-    private const int PotionHeal = 10;
     private const int KillsPerLevel = 4;
+    private const double DropChance = 0.25;
 
     private static readonly Color DamageColor = new(1f, 0.45f, 0.4f);
     private static readonly Color GoodColor = new(0.5f, 1f, 0.5f);
@@ -33,7 +34,7 @@ public partial class GameManager : Node3D
 
     private readonly Random _rng = new();
     private readonly List<Enemy> _enemies = new();
-    private readonly Dictionary<Vector2I, MeshInstance3D> _potions = new();
+    private readonly Dictionary<Vector2I, ItemPickup> _floorItems = new();
     private HashSet<Vector2I> _visible = new();
 
     private DungeonMap _map;
@@ -43,6 +44,7 @@ public partial class GameManager : Node3D
     private Hud _hud;
     private MainMenu _mainMenu;
     private PauseMenu _pauseMenu;
+    private InventoryPanel _inventoryPanel;
     private GameState _state;
     private int _floor;
     private int _kills;
@@ -70,6 +72,10 @@ public partial class GameManager : Node3D
         _hud = new Hud();
         AddChild(_hud);
 
+        _inventoryPanel = new InventoryPanel();
+        AddChild(_inventoryPanel);
+        _inventoryPanel.UseRequested += UseItem;
+
         _mainMenu = new MainMenu();
         AddChild(_mainMenu);
         _mainMenu.NewGameRequested += StartNewGame;
@@ -90,7 +96,7 @@ public partial class GameManager : Node3D
     }
 
     /// <summary>
-    /// Клавиши уровня всей игры. Движение обрабатывает Player, а здесь — Esc, R, M и колёсико.
+    /// Клавиши уровня всей игры. Движение обрабатывает Player, а здесь — Esc, R, M, I, X и колёсико.
     /// </summary>
     public override void _UnhandledInput(InputEvent @event)
     {
@@ -113,9 +119,19 @@ public partial class GameManager : Node3D
                 {
                     case GameState.Menu: _mainMenu.GoBack(); break;
                     case GameState.Playing: Pause(); break;
+                    case GameState.Inventory: CloseInventory(); break;
                     case GameState.Paused: Resume(); break;
                     case GameState.GameOver: ShowMainMenu(); break;
                 }
+                break;
+            case Key.I when _state == GameState.Playing:
+                OpenInventory();
+                break;
+            case Key.I when _state == GameState.Inventory:
+                CloseInventory();
+                break;
+            case Key.X when _state == GameState.Inventory:
+                DropItem(_inventoryPanel.FocusedIndex);
                 break;
             case Key.R when _state == GameState.GameOver:
                 StartNewGame();
@@ -154,6 +170,7 @@ public partial class GameManager : Node3D
 
         _map = DungeonGenerator.Generate(MapWidth, MapHeight, _rng);
         _renderer.Build(_map);
+
         // На заставке показываем всю карту целиком, без тумана войны
         var everything = new HashSet<Vector2I>();
         for (int x = 0; x < _map.Width; x++)
@@ -169,6 +186,7 @@ public partial class GameManager : Node3D
         _player.Visible = false;
         _hud.Visible = false;
         _pauseMenu.Visible = false;
+        _inventoryPanel.Visible = false;
         _camera.MenuMode = true;
         _camera.MenuCenter = new Vector3(MapWidth / 2f, 0f, MapHeight / 2f);
         _camera.SnapToTarget();
@@ -202,6 +220,18 @@ public partial class GameManager : Node3D
     {
         _state = GameState.Playing;
         _pauseMenu.Visible = false;
+    }
+
+    private void OpenInventory()
+    {
+        _state = GameState.Inventory;
+        _inventoryPanel.Open(_player.Inventory);
+    }
+
+    private void CloseInventory()
+    {
+        _state = GameState.Playing;
+        _inventoryPanel.Visible = false;
     }
 
     private void GameOver(Enemy killer)
@@ -239,7 +269,7 @@ public partial class GameManager : Node3D
         _camera.SnapToTarget();
 
         SpawnEnemies(Math.Min(3 + _floor * 2, 25));
-        SpawnPotions(_rng.Next(1, 4));
+        SpawnItems(_rng.Next(3, 6));
 
         UpdateFov();
         UpdateHud();
@@ -252,9 +282,9 @@ public partial class GameManager : Node3D
         foreach (var enemy in _enemies)
             enemy.QueueFree();
         _enemies.Clear();
-        foreach (var potion in _potions.Values)
-            potion.QueueFree();
-        _potions.Clear();
+        foreach (var pickup in _floorItems.Values)
+            pickup.QueueFree();
+        _floorItems.Clear();
     }
 
     // ---------- Ход игрока ----------
@@ -278,7 +308,7 @@ public partial class GameManager : Node3D
             else
             {
                 _player.MoveTo(target);
-                TryPickUpPotion(target);
+                TryPickUpItem(target);
                 if (_map.Get(target) == Tile.Stairs)
                 {
                     NextFloor();
@@ -287,6 +317,12 @@ public partial class GameManager : Node3D
             }
         }
 
+        EndPlayerTurn();
+    }
+
+    /// <summary>После любого действия игрока, которое тратит ход, ходят враги.</summary>
+    private void EndPlayerTurn()
+    {
         EnemiesTurn();
         UpdateFov();
         UpdateHud();
@@ -295,19 +331,27 @@ public partial class GameManager : Node3D
     private void AttackEnemy(Enemy enemy)
     {
         _player.PlayAttack(enemy.GridPos);
-        int damage = RollDamage(_player.Attack);
+        int damage = RollDamage(_player, enemy);
         enemy.TakeDamage(damage);
 
-        if (!enemy.IsDead)
-        {
+        if (enemy.IsDead)
+            KillEnemy(enemy);
+        else
             _hud.AddMessage($"{enemy.DisplayName} получает {damage} урона.");
-            return;
-        }
+    }
 
+    private void KillEnemy(Enemy enemy)
+    {
         _hud.AddMessage($"{enemy.DisplayName} повержен!", GoodColor);
         _enemies.Remove(enemy);
         enemy.Die();
         _kills++;
+
+        if (_rng.NextDouble() < DropChance && !_floorItems.ContainsKey(enemy.GridPos))
+        {
+            PlaceItem(ItemCatalog.Roll(_rng, _floor), enemy.GridPos);
+            _hud.AddMessage($"{enemy.DisplayName} что-то роняет.");
+        }
 
         if (_kills % KillsPerLevel == 0)
         {
@@ -316,13 +360,112 @@ public partial class GameManager : Node3D
         }
     }
 
-    private void TryPickUpPotion(Vector2I cell)
+    // ---------- Предметы ----------
+
+    private void TryPickUpItem(Vector2I cell)
     {
-        if (!_potions.Remove(cell, out var potion))
+        if (!_floorItems.TryGetValue(cell, out var pickup))
             return;
-        potion.QueueFree();
-        _player.Heal(PotionHeal);
-        _hud.AddMessage($"Ты выпиваешь зелье: +{PotionHeal} здоровья.", GoodColor);
+
+        if (!_player.Inventory.TryAdd(pickup.Item))
+        {
+            _hud.AddMessage($"Здесь лежит: {pickup.Item.Name}. Но сумка полна!", DamageColor);
+            return;
+        }
+        _floorItems.Remove(cell);
+        pickup.QueueFree();
+        _hud.AddMessage($"Ты подбираешь: {pickup.Item.Name}.", GoodColor);
+    }
+
+    private void PlaceItem(Item item, Vector2I cell)
+    {
+        var pickup = ItemPickup.Create(item, cell);
+        AddChild(pickup);
+        _floorItems[cell] = pickup;
+    }
+
+    /// <summary>Применить или надеть предмет из сумки. Тратит ход.</summary>
+    private void UseItem(int index)
+    {
+        var inventory = _player.Inventory;
+        if (_state != GameState.Inventory || index < 0 || index >= inventory.Items.Count)
+            return;
+
+        var item = inventory.Items[index];
+        switch (item.Kind)
+        {
+            case ItemKind.Weapon:
+                _player.Equip(index);
+                _hud.AddMessage($"Ты берёшь в руки: {item.Name}.", InfoColor);
+                break;
+
+            case ItemKind.Armor:
+                _player.Equip(index);
+                _hud.AddMessage($"Ты надеваешь: {item.Name}.", InfoColor);
+                break;
+
+            case ItemKind.HealthPotion:
+                if (!_player.IsHurt)
+                {
+                    _hud.AddMessage("Ты и так полностью здоров.");
+                    return; // ход не тратим, окно не закрываем
+                }
+                inventory.Items.RemoveAt(index);
+                _player.Heal(item.Power);
+                _hud.AddMessage($"Ты выпиваешь {item.Name}: +{item.Power} здоровья.", GoodColor);
+                break;
+
+            case ItemKind.TeleportScroll:
+                if (!TryFindFreeCell(out var destination, includeStartRoom: true))
+                    return;
+                inventory.Items.RemoveAt(index);
+                _player.Teleport(destination);
+                _camera.SnapToTarget();
+                _hud.AddMessage("Вспышка — и ты в другом месте!", InfoColor);
+                break;
+
+            case ItemKind.FireScroll:
+                var targets = _enemies.Where(enemy => _visible.Contains(enemy.GridPos)).ToList();
+                if (targets.Count == 0)
+                {
+                    _hud.AddMessage("Рядом нет врагов — свиток лучше поберечь.");
+                    return;
+                }
+                inventory.Items.RemoveAt(index);
+                int damage = item.Power + _floor;
+                _hud.AddMessage($"Огненная волна! Все видимые враги получают {damage} урона.", InfoColor);
+                foreach (var enemy in targets)
+                {
+                    enemy.TakeDamage(damage);
+                    if (enemy.IsDead)
+                        KillEnemy(enemy);
+                }
+                break;
+        }
+
+        CloseInventory();
+        EndPlayerTurn();
+    }
+
+    /// <summary>Выбросить предмет под ноги. Не тратит ход.</summary>
+    private void DropItem(int index)
+    {
+        var inventory = _player.Inventory;
+        if (index < 0 || index >= inventory.Items.Count)
+            return;
+        if (_floorItems.ContainsKey(_player.GridPos))
+        {
+            _hud.AddMessage("Здесь уже что-то лежит.");
+            return;
+        }
+
+        var item = inventory.Items[index];
+        inventory.Items.RemoveAt(index);
+        PlaceItem(item, _player.GridPos);
+        _hud.AddMessage($"Ты выбрасываешь: {item.Name}.");
+        _inventoryPanel.Refresh(inventory, index);
+        UpdateFov();
+        UpdateHud();
     }
 
     // ---------- Ход врагов ----------
@@ -342,7 +485,7 @@ public partial class GameManager : Node3D
             if (_map.AreAdjacent(enemy.GridPos, _player.GridPos))
             {
                 enemy.PlayAttack(_player.GridPos);
-                int damage = RollDamage(enemy.Attack);
+                int damage = RollDamage(enemy, _player);
                 _player.TakeDamage(damage);
                 _hud.AddMessage($"{enemy.DisplayName} бьёт тебя: -{damage}.", DamageColor);
 
@@ -377,39 +520,24 @@ public partial class GameManager : Node3D
         }
     }
 
-    private void SpawnPotions(int count)
+    private void SpawnItems(int count)
     {
-        var material = new StandardMaterial3D
-        {
-            AlbedoColor = new Color(1f, 0.3f, 0.6f),
-            EmissionEnabled = true,
-            Emission = new Color(1f, 0.3f, 0.6f),
-            EmissionEnergyMultiplier = 0.6f,
-        };
         for (int i = 0; i < count; i++)
-        {
-            if (!TryFindFreeCell(out var cell) || _potions.ContainsKey(cell))
-                continue;
-            var potion = new MeshInstance3D
-            {
-                Mesh = new CylinderMesh { TopRadius = 0.1f, BottomRadius = 0.15f, Height = 0.3f, Material = material },
-                Position = Actor.GridToWorld(cell) + new Vector3(0f, 0.15f, 0f),
-            };
-            AddChild(potion);
-            _potions[cell] = potion;
-        }
+            if (TryFindFreeCell(out var cell))
+                PlaceItem(ItemCatalog.Roll(_rng, _floor), cell);
     }
 
-    /// <summary>Случайная свободная клетка пола в любой комнате, кроме стартовой.</summary>
-    private bool TryFindFreeCell(out Vector2I cell)
+    /// <summary>Случайная свободная клетка пола в комнате (по умолчанию — не в стартовой).</summary>
+    private bool TryFindFreeCell(out Vector2I cell, bool includeStartRoom = false)
     {
+        int firstRoom = includeStartRoom ? 0 : 1;
         for (int attempt = 0; attempt < 100; attempt++)
         {
-            var room = _map.Rooms[_rng.Next(1, _map.Rooms.Count)];
+            var room = _map.Rooms[_rng.Next(firstRoom, _map.Rooms.Count)];
             cell = new Vector2I(
                 _rng.Next(room.Position.X, room.End.X),
                 _rng.Next(room.Position.Y, room.End.Y));
-            if (_map.Get(cell) == Tile.Floor && !IsOccupied(cell))
+            if (_map.Get(cell) == Tile.Floor && !IsOccupied(cell) && !_floorItems.ContainsKey(cell))
                 return true;
         }
         cell = default;
@@ -427,11 +555,12 @@ public partial class GameManager : Node3D
         _renderer.UpdateVisibility(_visible);
         foreach (var enemy in _enemies)
             enemy.Visible = _visible.Contains(enemy.GridPos);
-        foreach (var (cell, potion) in _potions)
-            potion.Visible = _map.Explored[cell.X, cell.Y];
+        foreach (var (cell, pickup) in _floorItems)
+            pickup.Visible = _map.Explored[cell.X, cell.Y];
 
         var visibleEnemies = _enemies.Where(enemy => enemy.Visible).Select(enemy => enemy.GridPos).ToList();
-        _hud.UpdateMinimap(_map, _visible, _player.GridPos, visibleEnemies, _potions.Keys.ToList());
+        var items = _floorItems.Select(pair => (pair.Key, pair.Value.Item.Color)).ToList();
+        _hud.UpdateMinimap(_map, _visible, _player.GridPos, visibleEnemies, items);
     }
 
     private void UpdateHud() => _hud.UpdateStats(_player, _floor, _kills);
@@ -440,8 +569,9 @@ public partial class GameManager : Node3D
 
     private bool IsOccupied(Vector2I cell) => cell == _player.GridPos || EnemyAt(cell) != null;
 
-    // Урон = атака ± 1, но не меньше 1
-    private int RollDamage(int attack) => Math.Max(1, attack + _rng.Next(-1, 2));
+    /// <summary>Урон = атака ± 1 минус защита цели, но не меньше 1.</summary>
+    private int RollDamage(Actor attacker, Actor defender) =>
+        Math.Max(1, attacker.Attack + _rng.Next(-1, 2) - defender.Defense);
 
     private void ParseCommandLine()
     {
@@ -460,7 +590,8 @@ public partial class GameManager : Node3D
 
     /// <summary>
     /// --view=menu — снимок главного меню, scores — таблицы рекордов,
-    /// pause — паузы после ходов, play (по умолчанию) — просто игры после ходов.
+    /// pause / inventory — паузы или инвентаря после ходов, play (по умолчанию) — просто игры.
+    /// Во время случайных ходов иногда применяется первый предмет из сумки — так проверяются предметы.
     /// </summary>
     private void RunSelfTest()
     {
@@ -478,19 +609,55 @@ public partial class GameManager : Node3D
         int moveFrames = inMenu ? 0 : _autoMoves * 3;
         if (_frame <= moveFrames)
         {
-            // Каждые 3 кадра — случайный шаг
             if (_frame % 3 == 0)
-                OnPlayerAction(DungeonMap.Directions[_rng.Next(DungeonMap.Directions.Length)]);
+                OnPlayerAction(AutoPilotDirection());
+            if (_frame % 30 == 0 && _state == GameState.Playing && _player.Inventory.Items.Count > 0)
+            {
+                OpenInventory();
+                UseItem(_rng.Next(_player.Inventory.Items.Count));
+                if (_state == GameState.Inventory)
+                    CloseInventory();
+            }
             return;
         }
 
-        if (_frame == moveFrames + 1 && _screenshotView == "pause" && _state == GameState.Playing)
-            Pause();
+        if (_frame == moveFrames + 1 && _state == GameState.Playing)
+        {
+            if (_screenshotView == "pause")
+                Pause();
+            else if (_screenshotView == "inventory")
+                OpenInventory();
+        }
 
         if (_frame == moveFrames + 40)
         {
+            GD.Print($"Самопроверка: этаж {_floor}, убито {_kills}, здоровье {_player.Hp}, состояние {_state}");
             GetViewport().GetTexture().GetImage().SavePng(_screenshotPath);
             GetTree().Quit();
         }
+    }
+
+    /// <summary>Автопилот для самопроверки: чаще идёт к лестнице, иногда шагает случайно.</summary>
+    private Vector2I AutoPilotDirection()
+    {
+        var randomDirection = DungeonMap.Directions[_rng.Next(DungeonMap.Directions.Length)];
+        if (_rng.NextDouble() < 0.3)
+            return randomDirection;
+
+        var distances = _map.DistanceField(_map.StairsPos, MapWidth * MapHeight);
+        if (!distances.TryGetValue(_player.GridPos, out int best))
+            return randomDirection;
+
+        var result = randomDirection;
+        foreach (var direction in DungeonMap.Directions)
+        {
+            var next = _player.GridPos + direction;
+            if (distances.TryGetValue(next, out int distance) && distance < best && _map.CanMove(_player.GridPos, next))
+            {
+                best = distance;
+                result = direction;
+            }
+        }
+        return result;
     }
 }

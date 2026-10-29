@@ -14,6 +14,7 @@ public partial class Hud : CanvasLayer
     private Label _hpLabel;
     private ProgressBar _hpBar;
     private Label _infoLabel;
+    private Label _gearLabel;
     private Minimap _minimap;
     private VBoxContainer _log;
     private ColorRect _gameOverPanel;
@@ -55,6 +56,10 @@ public partial class Hud : CanvasLayer
         _infoLabel = Ui.CreateLabel(18);
         stats.AddChild(_infoLabel);
 
+        _gearLabel = Ui.CreateLabel(16);
+        _gearLabel.Modulate = new Color(1f, 1f, 1f, 0.8f);
+        stats.AddChild(_gearLabel);
+
         // Пустой растягивающийся элемент отодвигает мини-карту к правому краю
         topRow.AddChild(new Control
         {
@@ -77,7 +82,7 @@ public partial class Hud : CanvasLayer
 
         var help = Ui.CreateLabel(14,
             "WASD / стрелки — ход и атака  •  Q E Z C — диагонали  •  Пробел — ждать  •  " +
-            "Колёсико — зум  •  M — карта  •  Esc — пауза");
+            "I — инвентарь  •  Колёсико — зум  •  M — карта  •  Esc — пауза");
         help.Modulate = new Color(1f, 1f, 1f, 0.6f);
         column.AddChild(help);
 
@@ -99,11 +104,15 @@ public partial class Hud : CanvasLayer
         _hpLabel.Text = $"Здоровье: {player.Hp} / {player.MaxHp}";
         _hpBar.MaxValue = player.MaxHp;
         _hpBar.Value = player.Hp;
-        _infoLabel.Text = $"Этаж: {floor}   Уровень: {player.Level}   Атака: {player.Attack}   Побеждено: {kills}";
+        _infoLabel.Text = $"Этаж: {floor}   Уровень: {player.Level}   Атака: {player.Attack}   " +
+                          $"Защита: {player.Defense}   Побеждено: {kills}";
+        var inventory = player.Inventory;
+        _gearLabel.Text = $"Оружие: {inventory.Weapon?.Name ?? "нет"}   Броня: {inventory.Armor?.Name ?? "нет"}   " +
+                          $"Сумка: {inventory.Items.Count}/{Inventory.Capacity}";
     }
 
     public void UpdateMinimap(DungeonMap map, HashSet<Vector2I> visible, Vector2I player,
-        List<Vector2I> visibleEnemies, List<Vector2I> items) =>
+        List<Vector2I> visibleEnemies, List<(Vector2I Cell, Color Color)> items) =>
         _minimap.UpdateData(map, visible, player, visibleEnemies, items);
 
     public void ToggleMinimap() => _minimap.Visible = !_minimap.Visible;
