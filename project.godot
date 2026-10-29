@@ -1,0 +1,23 @@
+; Engine configuration file.
+; Настройки проекта Godot. Обычно редактируются через Project Settings в редакторе.
+
+config_version=5
+
+[application]
+
+config/name="Roguelike"
+run/main_scene="res://scenes/Main.tscn"
+config/features=PackedStringArray("4.7", "C#", "Forward Plus")
+
+[display]
+
+window/size/viewport_width=1280
+window/size/viewport_height=720
+
+[dotnet]
+
+project/assembly_name="Roguelike"
+
+[rendering]
+
+anti_aliasing/quality/msaa_3d=2

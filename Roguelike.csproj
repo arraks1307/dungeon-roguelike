@@ -1,0 +1,8 @@
+<Project Sdk="Godot.NET.Sdk/4.7.2">
+  <PropertyGroup>
+    <!-- На компьютере установлен только .NET 10, поэтому целимся в него -->
+    <TargetFramework>net10.0</TargetFramework>
+    <EnableDynamicLoading>true</EnableDynamicLoading>
+    <RootNamespace>Roguelike</RootNamespace>
+  </PropertyGroup>
+</Project>
