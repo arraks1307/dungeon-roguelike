@@ -9,6 +9,22 @@ public enum Tile
     Wall,
     Floor,
     Stairs,
+    Door,       // закрытая дверь: проходима (шаг в неё открывает), но загораживает обзор
+    OpenDoor,
+    SecretDoor, // выглядит и ведёт себя как стена, пока её не найдут
+}
+
+public enum TrapKind
+{
+    Spikes,   // ранит каждый раз, когда на неё наступают
+    Alarm,    // будит всех врагов этажа (одноразовая)
+    Teleport, // переносит в случайное место (одноразовая)
+}
+
+public class Trap
+{
+    public TrapKind Kind;
+    public bool Revealed;
 }
 
 /// <summary>
@@ -37,6 +53,12 @@ public class DungeonMap
     public List<Rect2I> Rooms { get; } = new();
     public Vector2I StartPos { get; set; }
     public Vector2I StairsPos { get; set; }
+    public int ThemeIndex { get; set; }
+    public DungeonTheme Theme => Themes.All[ThemeIndex];
+    public Dictionary<Vector2I, Trap> Traps { get; } = new();
+
+    /// <summary>Секретные комнаты (в Rooms не входят, чтобы там не появлялись враги).</summary>
+    public List<Rect2I> SecretRooms { get; } = new();
 
     public DungeonMap(int width, int height)
     {
@@ -50,11 +72,16 @@ public class DungeonMap
 
     public Tile Get(Vector2I p) => InBounds(p) ? Tiles[p.X, p.Y] : Tile.Wall;
 
-    public bool IsWalkable(Vector2I p) => Get(p) != Tile.Wall;
+    public bool IsWalkable(Vector2I p) => Get(p) is Tile.Floor or Tile.Stairs or Tile.Door or Tile.OpenDoor;
+
+    public bool IsDoor(Vector2I p) => Get(p) is Tile.Door or Tile.OpenDoor;
+
+    /// <summary>Загораживает ли клетка обзор: стены, потайные и закрытые двери.</summary>
+    public bool BlocksSight(Vector2I p) => Get(p) is Tile.Wall or Tile.SecretDoor or Tile.Door;
 
     /// <summary>
     /// Можно ли шагнуть из from в соседнюю клетку to. По диагонали нельзя
-    /// протиснуться между двумя стенами, которые касаются углами.
+    /// протиснуться между двумя стенами, которые касаются углами, и нельзя входить в дверь наискосок.
     /// </summary>
     public bool CanMove(Vector2I from, Vector2I to)
     {
@@ -62,6 +89,8 @@ public class DungeonMap
             return false;
         if (from.X == to.X || from.Y == to.Y)
             return true;
+        if (IsDoor(from) || IsDoor(to))
+            return false;
         return IsWalkable(new Vector2I(to.X, from.Y)) || IsWalkable(new Vector2I(from.X, to.Y));
     }
 
@@ -105,7 +134,7 @@ public class DungeonMap
         {
             if (x == to.X && y == to.Y)
                 return true;
-            if ((x != from.X || y != from.Y) && Tiles[x, y] == Tile.Wall)
+            if ((x != from.X || y != from.Y) && BlocksSight(new Vector2I(x, y)))
                 return false;
 
             int doubled = 2 * error;

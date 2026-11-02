@@ -232,7 +232,8 @@ public partial class GameManager
                 for (int x = 0; x < _map.Width; x++)
                     for (int y = 0; y < _map.Height; y++)
                         _map.Explored[x, y] = true;
-                _hud.AddMessage("Карта этажа открывается перед тобой.", InfoColor);
+                RevealAllSecrets();
+                _hud.AddMessage("Карта этажа открывается перед тобой — со всеми ловушками и тайниками.", InfoColor);
                 _sound.Play(Sound.Pickup);
                 return true;
         }

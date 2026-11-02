@@ -21,5 +21,6 @@ public interface IGameWorld
     bool IsVisibleToPlayer(Vector2I cell);
 
     void EnemyAttacksPlayer(Enemy enemy, bool ranged);
+    void OpenDoor(Vector2I cell);
     void SummonMinions(Enemy summoner, int count);
 }

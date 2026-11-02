@@ -21,7 +21,21 @@ public class SaveData
     public MapSave Map;
     public List<EnemySave> Enemies = new();
     public List<PickupSave> Pickups = new();
+    public List<ChestSave> Chests = new();
     public MerchantSave Merchant;
+}
+
+public class ChestSave
+{
+    public int X, Y;
+    public bool Mimic, Secret;
+}
+
+public class TrapSave
+{
+    public int X, Y;
+    public TrapKind Kind;
+    public bool Revealed;
 }
 
 public class ItemSave
@@ -70,6 +84,8 @@ public class MapSave
     public string Explored; // '1' — исследована, '0' — нет
     public List<int[]> Rooms = new(); // [x, y, ширина, высота]
     public int StartX, StartY, StairsX, StairsY;
+    public int Theme;
+    public List<TrapSave> Traps = new();
 
     public static MapSave From(DungeonMap map)
     {
@@ -92,6 +108,11 @@ public class MapSave
             Rooms = map.Rooms.Select(r => new[] { r.Position.X, r.Position.Y, r.Size.X, r.Size.Y }).ToList(),
             StartX = map.StartPos.X, StartY = map.StartPos.Y,
             StairsX = map.StairsPos.X, StairsY = map.StairsPos.Y,
+            Theme = map.ThemeIndex,
+            Traps = map.Traps.Select(pair => new TrapSave
+            {
+                X = pair.Key.X, Y = pair.Key.Y, Kind = pair.Value.Kind, Revealed = pair.Value.Revealed,
+            }).ToList(),
         };
     }
 
@@ -111,6 +132,9 @@ public class MapSave
             map.Rooms.Add(new Rect2I(r[0], r[1], r[2], r[3]));
         map.StartPos = new Vector2I(StartX, StartY);
         map.StairsPos = new Vector2I(StairsX, StairsY);
+        map.ThemeIndex = Math.Clamp(Theme, 0, Themes.All.Length - 1);
+        foreach (var trap in Traps)
+            map.Traps[new Vector2I(trap.X, trap.Y)] = new Trap { Kind = trap.Kind, Revealed = trap.Revealed };
         return map;
     }
 }

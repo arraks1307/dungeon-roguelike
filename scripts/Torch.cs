@@ -8,7 +8,8 @@ namespace Roguelike;
 /// </summary>
 public partial class Torch : Node3D
 {
-    private static readonly Color FlameColor = new(1f, 0.6f, 0.2f);
+    /// <summary>Цвет пламени зависит от темы этажа (в крипте — зелёный).</summary>
+    public Color FlameColor { get; set; } = new(1f, 0.6f, 0.2f);
 
     private OmniLight3D _light;
     private float _time;

@@ -46,7 +46,8 @@ public partial class GameManager
         $"этаж {_floor}, убито {_kills}, позиция {_player.GridPos}, здоровье {_player.Hp}/{_player.MaxHp}, " +
         $"атака {_player.Attack}, золото {_player.Gold}, сумка {_player.Inventory.Items.Count}, " +
         $"надето {_player.Inventory.Equipped.Count()}, врагов {_enemies.Count}, предметов на полу {_floorItems.Count}, " +
-        $"торговец {(_merchant != null ? "есть" : "нет")}";
+        $"торговец {(_merchant != null ? "есть" : "нет")}, сундуков {_chests.Count}, ловушек {_map.Traps.Count}, " +
+        $"тема {_map.Theme.Name}";
 
     /// <summary>
     /// --view=menu — главное меню, scores — рекорды, pause / inventory / shop — соответствующее окно
@@ -112,6 +113,15 @@ public partial class GameManager
             case "settings":
                 Pause();
                 OpenSettings();
+                break;
+            case "reveal":
+                // Показать этаж целиком: удобно смотреть темы, двери, ловушки и декор
+                for (int x = 0; x < _map.Width; x++)
+                    for (int y = 0; y < _map.Height; y++)
+                        _map.Explored[x, y] = true;
+                RevealAllSecrets();
+                UpdateFov();
+                _camera.Zoom(6); // отдаляем камеру
                 break;
             case "saveload":
                 // Сохраняем, уходим в меню (мир очищается), загружаем и сравниваем сводки

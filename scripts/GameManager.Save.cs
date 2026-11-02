@@ -44,6 +44,7 @@ public partial class GameManager
                 Gold = pair.Value.Gold,
                 Item = pair.Value.Item == null ? null : ItemSave.From(pair.Value.Item),
             }).ToList(),
+            Chests = _chests.Values.Select(chest => chest.CreateSave()).ToList(),
         };
 
         if (_merchant != null)
@@ -84,6 +85,7 @@ public partial class GameManager
             _kills = data.Kills;
             _map = data.Map.ToMap();
             _renderer.Build(_map);
+            ApplyTheme();
 
             _state = GameState.Playing;
             _mainMenu.Visible = false;
@@ -114,6 +116,9 @@ public partial class GameManager
                 else if (save.Gold > 0)
                     PlaceGold(save.Gold, cell);
             }
+
+            foreach (var save in data.Chests)
+                PlaceChest(new Vector2I(save.X, save.Y), save.Mimic, save.Secret);
 
             if (data.Merchant != null)
             {

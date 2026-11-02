@@ -67,7 +67,8 @@ public partial class GameManager : Node3D, IGameWorld
     public Dictionary<Vector2I, int> PlayerDistances => _playerDistances;
 
     public bool IsOccupied(Vector2I cell) =>
-        cell == _player.GridPos || EnemyAt(cell) != null || (_merchant != null && _merchant.GridPos == cell);
+        cell == _player.GridPos || EnemyAt(cell) != null || _chests.ContainsKey(cell) ||
+        (_merchant != null && _merchant.GridPos == cell);
 
     public bool IsVisibleToPlayer(Vector2I cell) => _visible.Contains(cell);
 
@@ -95,7 +96,7 @@ public partial class GameManager : Node3D, IGameWorld
 
         if (_player.IsDead)
         {
-            GameOver(enemy);
+            GameOver(enemy.DisplayName);
             return;
         }
 
@@ -256,7 +257,7 @@ public partial class GameManager : Node3D, IGameWorld
 
     private void SetupEnvironment()
     {
-        var environment = new Godot.Environment
+        var environment = _environment = new Godot.Environment
         {
             BackgroundMode = Godot.Environment.BGMode.Color,
             BackgroundColor = new Color(0.02f, 0.02f, 0.03f),
@@ -277,8 +278,9 @@ public partial class GameManager : Node3D, IGameWorld
         _state = GameState.Menu;
         ClearLevelObjects();
 
-        _map = DungeonGenerator.Generate(MapWidth, MapHeight, _rng);
+        _map = DungeonGenerator.Generate(MapWidth, MapHeight, _rng, themeIndex: _rng.Next(Themes.All.Length));
         _renderer.Build(_map);
+        ApplyTheme();
 
         // На заставке показываем всю карту целиком, без тумана войны
         var everything = new HashSet<Vector2I>();
@@ -354,7 +356,7 @@ public partial class GameManager : Node3D, IGameWorld
             _pauseMenu.Open();
     }
 
-    private void GameOver(Enemy killer)
+    private void GameOver(string killerName)
     {
         _state = GameState.GameOver;
         SaveSystem.Delete(); // смерть окончательна — продолжить этот забег нельзя
@@ -375,7 +377,7 @@ public partial class GameManager : Node3D, IGameWorld
 
         _hud.ShowGameOver(
             $"Ты погиб на этаже {_floor}\n" +
-            $"Тебя одолел: {killer.DisplayName}\n" +
+            $"Тебя одолел: {killerName}\n" +
             $"Побеждено врагов: {_kills}   Золото: {_player.Gold}\n" +
             placeText + "\n" +
             "R — начать заново  •  Esc — в главное меню");
@@ -387,15 +389,20 @@ public partial class GameManager : Node3D, IGameWorld
         ClearLevelObjects();
 
         bool bossFloor = _floor % BossFloorInterval == 0;
-        _map = DungeonGenerator.Generate(MapWidth, MapHeight, _rng, withBossRoom: bossFloor);
+        int themeIndex = Themes.IndexFor(_floor);
+        _map = DungeonGenerator.Generate(MapWidth, MapHeight, _rng, themeIndex, withBossRoom: bossFloor);
         _renderer.Build(_map);
+        ApplyTheme();
         _player.Teleport(_map.StartPos);
         _camera.SnapToTarget();
 
         int enemyCount = Math.Min(3 + _floor * 2, 25);
         SpawnEnemies(bossFloor ? enemyCount / 2 : enemyCount);
+        SpawnChests();
         SpawnItems(_rng.Next(3, 6));
         SpawnGold(_rng.Next(2, 5));
+        if (!bossFloor)
+            SpawnTraps();
         if (bossFloor)
             SpawnBoss();
         else if (ShouldSpawnMerchant())
@@ -405,7 +412,9 @@ public partial class GameManager : Node3D, IGameWorld
         UpdateHud();
         if (bossFloor)
             _hud.AddMessage("Ты чувствуешь присутствие чего-то огромного... Лестница откроется после победы над боссом.", DamageColor);
-        else if (_floor > 1)
+        else if (_floor == 1 || Themes.IndexFor(_floor - 1) != themeIndex)
+            _hud.AddMessage($"Этаж {_floor}: {_map.Theme.Name}.", InfoColor);
+        else
             _hud.AddMessage($"Этаж {_floor}. Здесь опаснее.", InfoColor);
         if (_merchant != null)
             _hud.AddMessage("Где-то на этаже звенят монеты — здесь есть торговец.", InfoColor);
@@ -443,6 +452,9 @@ public partial class GameManager : Node3D, IGameWorld
         foreach (var pickup in _floorItems.Values)
             pickup.QueueFree();
         _floorItems.Clear();
+        foreach (var chest in _chests.Values)
+            chest.QueueFree();
+        _chests.Clear();
         _merchant?.QueueFree();
         _merchant = null;
         _boss = null;
@@ -472,12 +484,23 @@ public partial class GameManager : Node3D, IGameWorld
             {
                 AttackEnemy(enemy);
             }
+            else if (_chests.TryGetValue(target, out var chest))
+            {
+                OpenChest(chest);
+            }
+            else if (_map.Get(target) == Tile.Door)
+            {
+                OpenDoor(target); // открыть дверь — отдельное действие, сам шаг будет следующим ходом
+            }
             else
             {
                 _player.MoveTo(target);
                 _sound.Play(Sound.Step);
                 TryPickUpItem(target);
-                if (_map.Get(target) == Tile.Stairs)
+                CheckTrap(target);
+                if (_state != GameState.Playing)
+                    return; // погиб на шипах
+                if (_map.Get(_player.GridPos) == Tile.Stairs)
                 {
                     _sound.Play(Sound.Stairs);
                     NextFloor();
@@ -504,6 +527,7 @@ public partial class GameManager : Node3D, IGameWorld
         if (invisibilityEnded)
             _hud.AddMessage("Ты снова видим.");
 
+        SearchSurroundings();
         UpdateFov();
         UpdateHud();
     }
@@ -638,7 +662,8 @@ public partial class GameManager : Node3D, IGameWorld
             cell = new Vector2I(
                 _rng.Next(room.Position.X, room.End.X),
                 _rng.Next(room.Position.Y, room.End.Y));
-            if (_map.Get(cell) == Tile.Floor && !IsOccupied(cell) && !_floorItems.ContainsKey(cell))
+            if (_map.Get(cell) == Tile.Floor && !IsOccupied(cell) && !_floorItems.ContainsKey(cell) &&
+                !_map.Traps.ContainsKey(cell))
                 return true;
         }
         cell = default;
@@ -660,9 +685,13 @@ public partial class GameManager : Node3D, IGameWorld
             pickup.Visible = _map.Explored[cell.X, cell.Y];
         if (_merchant != null)
             _merchant.Visible = _map.Explored[_merchant.GridPos.X, _merchant.GridPos.Y];
+        foreach (var (cell, chest) in _chests)
+            chest.Visible = _map.Explored[cell.X, cell.Y];
 
         var visibleEnemies = _enemies.Where(enemy => enemy.Visible).Select(enemy => enemy.GridPos).ToList();
         var markers = _floorItems.Select(pair => (pair.Key, pair.Value.MapColor)).ToList();
+        markers.AddRange(_chests.Keys.Select(cell => (cell, new Color(0.75f, 0.5f, 0.2f))));
+        markers.AddRange(_map.Traps.Where(pair => pair.Value.Revealed).Select(pair => (pair.Key, new Color(0.9f, 0.2f, 0.2f))));
         if (_merchant != null && _merchant.Visible)
             markers.Add((_merchant.GridPos, new Color(0.7f, 0.4f, 1f)));
         _hud.UpdateMinimap(_map, _visible, _player.GridPos, visibleEnemies, markers);

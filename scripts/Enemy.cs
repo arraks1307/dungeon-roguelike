@@ -41,7 +41,11 @@ public partial class Enemy : Actor
         new("Лучник", 8, 3, 0, new Color(0.3f, 0.75f, 0.7f), EnemyShape.Cone, EnemyBehavior.Archer, Slow: false, MinFloor: 2),
         new("Призрак", 7, 4, 0, new Color(0.75f, 0.8f, 1f), EnemyShape.Capsule, EnemyBehavior.Ghost, Slow: true, MinFloor: 3),
         new("Орк", 18, 5, 1, new Color(0.85f, 0.25f, 0.2f), EnemyShape.Box, EnemyBehavior.Melee, Slow: false, MinFloor: 3),
+        // Мимик сам по этажам не бродит (MinFloor 99) — он появляется только из сундука
+        new("Мимик", 20, 6, 1, new Color(0.55f, 0.33f, 0.14f), EnemyShape.Box, EnemyBehavior.Melee, Slow: false, MinFloor: 99),
     };
+
+    public static EnemyType Mimic => Array.Find(Types, type => type.Name == "Мимик");
 
     public static readonly EnemyType BossType =
         new("Король орков", 50, 6, 2, new Color(0.55f, 0.1f, 0.12f), EnemyShape.Box, EnemyBehavior.Boss, Slow: false, MinFloor: 5);
@@ -210,7 +214,12 @@ public partial class Enemy : Actor
             return;
         }
         var step = ChooseStep(world.PlayerDistances, cell => world.Map.CanMove(GridPos, cell) && !world.IsOccupied(cell));
-        if (step.HasValue)
+        if (!step.HasValue)
+            return;
+        // Закрытую дверь на пути враг сначала открывает — это занимает его ход
+        if (world.Map.Get(step.Value) == Tile.Door)
+            world.OpenDoor(step.Value);
+        else
             MoveTo(step.Value);
     }
 
