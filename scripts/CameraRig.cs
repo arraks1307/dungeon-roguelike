@@ -44,7 +44,11 @@ public partial class CameraRig : Camera3D
     public void SnapToTarget() => Position = GoalPosition();
 
     /// <summary>Тряска камеры: сила затухает сама за доли секунды.</summary>
-    public void Shake(float strength) => _shake = Mathf.Max(_shake, strength);
+    public void Shake(float strength)
+    {
+        if (Settings.Current.CameraShake)
+            _shake = Mathf.Max(_shake, strength);
+    }
 
     public override void _Process(double delta)
     {

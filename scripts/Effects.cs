@@ -16,6 +16,8 @@ public static class Effects
     /// </summary>
     public static void FloatingText(Node3D parent, Vector2I cell, string text, Color color)
     {
+        if (!Settings.Current.DamageNumbers)
+            return;
         var label = new Label3D
         {
             Text = text,
@@ -73,6 +75,8 @@ public static class Effects
     /// <summary>Стрела летит из одной клетки в другую.</summary>
     public static void Projectile(Node3D parent, Vector2I from, Vector2I to, Color color)
     {
+        if (Settings.AnimationScale == 0f)
+            return;
         var start = Actor.GridToWorld(from) + ChestHeight;
         var end = Actor.GridToWorld(to) + ChestHeight;
 
@@ -92,7 +96,7 @@ public static class Effects
         arrow.LookAt(end); // длинная сторона коробки (ось Z) смотрит на цель
 
         var tween = arrow.CreateTween();
-        tween.TweenProperty(arrow, "position", end, 0.15f);
+        tween.TweenProperty(arrow, "position", end, 0.15f * Settings.AnimationScale);
         tween.TweenCallback(Callable.From(arrow.QueueFree));
     }
 }

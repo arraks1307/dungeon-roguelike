@@ -1,4 +1,5 @@
 using System;
+using System.Linq;
 using Godot;
 
 namespace Roguelike;
@@ -136,6 +137,46 @@ public partial class Player : Actor
             BodyMaterial.AlbedoColor = DisplayColor;
 
         return (healed, strengthEnded, invisibilityEnded);
+    }
+
+    public PlayerSave CreateSave() => new()
+    {
+        X = GridPos.X,
+        Y = GridPos.Y,
+        Level = Level,
+        Hp = Hp,
+        Gold = Gold,
+        BaseAttack = _baseAttack,
+        BaseMaxHp = _baseMaxHp,
+        StrengthTurns = StrengthTurns,
+        StrengthBonus = _strengthBonus,
+        InvisibleTurns = InvisibleTurns,
+        TurnCounter = _turnCounter,
+        Items = Inventory.Items.Select(ItemSave.From).ToList(),
+        Equipped = Inventory.Equipped.Select(ItemSave.From).ToList(),
+    };
+
+    public void RestoreSave(PlayerSave save)
+    {
+        Level = save.Level;
+        Gold = save.Gold;
+        _baseAttack = save.BaseAttack;
+        _baseMaxHp = save.BaseMaxHp;
+        StrengthTurns = save.StrengthTurns;
+        _strengthBonus = save.StrengthBonus;
+        InvisibleTurns = save.InvisibleTurns;
+        _turnCounter = save.TurnCounter;
+
+        Inventory.Clear();
+        foreach (var item in save.Equipped.Select(s => s.ToItem()).Where(item => item != null))
+            Inventory.SetEquipped(item);
+        foreach (var item in save.Items.Select(s => s.ToItem()).Where(item => item != null))
+            Inventory.Items.Add(item);
+
+        RecalculateStats();
+        Hp = Mathf.Clamp(save.Hp, 1, MaxHp);
+        BodyMaterial.AlbedoColor = DisplayColor;
+        Teleport(new Vector2I(save.X, save.Y));
     }
 
     private void RecalculateStats()

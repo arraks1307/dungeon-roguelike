@@ -67,6 +67,9 @@ public class Inventory
             Items.RemoveAt(index);
     }
 
+    /// <summary>Надеть предмет напрямую, минуя сумку (при загрузке сохранения).</summary>
+    public void SetEquipped(Item item) => _equipped[item.Slot] = item;
+
     public void Clear()
     {
         Items.Clear();

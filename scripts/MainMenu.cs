@@ -9,7 +9,10 @@ namespace Roguelike;
 public partial class MainMenu : CanvasLayer
 {
     public event Action NewGameRequested;
+    public event Action ContinueRequested;
+    public event Action SettingsRequested;
 
+    private Button _continueButton;
     private VBoxContainer _mainPage;
     private VBoxContainer _scoresPage;
     private GridContainer _scoresGrid;
@@ -35,9 +38,12 @@ public partial class MainMenu : CanvasLayer
         _mainPage.AddChild(subtitle);
         _mainPage.AddChild(new Control { CustomMinimumSize = new Vector2(0f, 20f) });
 
+        _continueButton = Ui.CreateButton("Продолжить", () => ContinueRequested?.Invoke());
+        _mainPage.AddChild(_continueButton);
         _newGameButton = Ui.CreateButton("Новая игра", () => NewGameRequested?.Invoke());
         _mainPage.AddChild(_newGameButton);
         _mainPage.AddChild(Ui.CreateButton("Рекорды", ShowScores));
+        _mainPage.AddChild(Ui.CreateButton("Настройки", () => SettingsRequested?.Invoke()));
         _mainPage.AddChild(Ui.CreateButton("Выход", () => GetTree().Quit()));
 
         _scoresPage = new VBoxContainer { Visible = false };
@@ -63,7 +69,9 @@ public partial class MainMenu : CanvasLayer
         Visible = true;
         _scoresPage.Visible = false;
         _mainPage.Visible = true;
-        Ui.FocusLater(_newGameButton);
+        // «Продолжить» есть, только если есть сохранённый забег
+        _continueButton.Visible = SaveSystem.HasSave;
+        Ui.FocusLater(_continueButton.Visible ? _continueButton : _newGameButton);
     }
 
     /// <summary>Esc в меню: со страницы рекордов возвращаемся на главную.</summary>

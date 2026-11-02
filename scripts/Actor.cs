@@ -74,6 +74,13 @@ public partial class Actor : Node3D
         },
     };
 
+    /// <summary>Установить здоровье напрямую (при загрузке сохранения).</summary>
+    protected void SetHp(int hp)
+    {
+        Hp = Mathf.Clamp(hp, 0, MaxHp);
+        UpdateHealthBar();
+    }
+
     private void UpdateHealthBar()
     {
         if (_healthBar == null)
@@ -106,8 +113,13 @@ public partial class Actor : Node3D
     {
         GridPos = p;
         _moveTween?.Kill();
+        if (Settings.AnimationScale == 0f)
+        {
+            Position = GridToWorld(p); // анимации выключены — переходим сразу
+            return;
+        }
         _moveTween = CreateTween();
-        _moveTween.TweenProperty(this, "position", GridToWorld(p), MoveDuration);
+        _moveTween.TweenProperty(this, "position", GridToWorld(p), MoveDuration * Settings.AnimationScale);
     }
 
     /// <summary>Анимация удара: тело дёргается в сторону цели и возвращается.</summary>
@@ -116,9 +128,12 @@ public partial class Actor : Node3D
         var offset = new Vector3(target.X - GridPos.X, 0f, target.Y - GridPos.Y) * 0.35f;
         _attackTween?.Kill();
         Body.Position = _bodyRestPosition;
+        float scale = Settings.AnimationScale;
+        if (scale == 0f)
+            return;
         _attackTween = CreateTween();
-        _attackTween.TweenProperty(Body, "position", _bodyRestPosition + offset, 0.05f);
-        _attackTween.TweenProperty(Body, "position", _bodyRestPosition, 0.1f);
+        _attackTween.TweenProperty(Body, "position", _bodyRestPosition + offset, 0.05f * scale);
+        _attackTween.TweenProperty(Body, "position", _bodyRestPosition, 0.1f * scale);
     }
 
     public void TakeDamage(int amount)
@@ -133,8 +148,13 @@ public partial class Actor : Node3D
     /// <summary>Сжимаемся в точку и удаляем узел из сцены.</summary>
     public void Die()
     {
+        if (Settings.AnimationScale == 0f)
+        {
+            QueueFree();
+            return;
+        }
         var tween = CreateTween();
-        tween.TweenProperty(this, "scale", new Vector3(0.01f, 0.01f, 0.01f), 0.2f);
+        tween.TweenProperty(this, "scale", new Vector3(0.01f, 0.01f, 0.01f), 0.2f * Settings.AnimationScale);
         tween.TweenCallback(Callable.From(QueueFree));
     }
 }

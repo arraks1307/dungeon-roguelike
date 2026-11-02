@@ -1,3 +1,4 @@
+using System.Linq;
 using Godot;
 
 namespace Roguelike;
@@ -31,7 +32,21 @@ public partial class GameManager
             else if (arg.StartsWith("--start-floor="))
                 _startFloor = int.Parse(arg["--start-floor=".Length..]);
         }
+
+        // Самопроверка не должна трогать настоящее сохранение игрока
+        if (_screenshotPath != null)
+        {
+            SaveSystem.FilePath = "user://selftest_save.json";
+            SaveSystem.Delete();
+        }
     }
+
+    /// <summary>Короткая сводка о мире — чтобы сравнить состояние до сохранения и после загрузки.</summary>
+    private string WorldSummary() =>
+        $"этаж {_floor}, убито {_kills}, позиция {_player.GridPos}, здоровье {_player.Hp}/{_player.MaxHp}, " +
+        $"атака {_player.Attack}, золото {_player.Gold}, сумка {_player.Inventory.Items.Count}, " +
+        $"надето {_player.Inventory.Equipped.Count()}, врагов {_enemies.Count}, предметов на полу {_floorItems.Count}, " +
+        $"торговец {(_merchant != null ? "есть" : "нет")}";
 
     /// <summary>
     /// --view=menu — главное меню, scores — рекорды, pause / inventory / shop — соответствующее окно
@@ -93,6 +108,21 @@ public partial class GameManager
                 if (_merchant == null)
                     SpawnMerchant();
                 OpenShop();
+                break;
+            case "settings":
+                Pause();
+                OpenSettings();
+                break;
+            case "saveload":
+                // Сохраняем, уходим в меню (мир очищается), загружаем и сравниваем сводки
+                string before = WorldSummary();
+                SaveRun();
+                ShowMainMenu();
+                ContinueGame();
+                string after = WorldSummary();
+                GD.Print($"До сохранения:   {before}");
+                GD.Print($"После загрузки:  {after}");
+                GD.Print(before == after ? "Сохранение: СОВПАДАЕТ" : "Сохранение: РАЗЛИЧАЕТСЯ");
                 break;
         }
     }

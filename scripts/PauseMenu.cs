@@ -10,7 +10,8 @@ namespace Roguelike;
 public partial class PauseMenu : CanvasLayer
 {
     public event Action ResumeRequested;
-    public event Action MainMenuRequested;
+    public event Action SettingsRequested;
+    public event Action SaveAndExitRequested;
 
     private Button _resumeButton;
 
@@ -27,7 +28,8 @@ public partial class PauseMenu : CanvasLayer
 
         _resumeButton = Ui.CreateButton("Продолжить", () => ResumeRequested?.Invoke());
         column.AddChild(_resumeButton);
-        column.AddChild(Ui.CreateButton("В главное меню", () => MainMenuRequested?.Invoke()));
+        column.AddChild(Ui.CreateButton("Настройки", () => SettingsRequested?.Invoke()));
+        column.AddChild(Ui.CreateButton("Сохранить и выйти в меню", () => SaveAndExitRequested?.Invoke()));
     }
 
     public void Open()

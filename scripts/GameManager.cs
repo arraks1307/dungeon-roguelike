@@ -53,6 +53,7 @@ public partial class GameManager : Node3D, IGameWorld
     private PauseMenu _pauseMenu;
     private InventoryPanel _inventoryPanel;
     private ShopPanel _shopPanel;
+    private SettingsMenu _settingsMenu;
     private SoundManager _sound;
     private GameState _state;
     private int _floor;
@@ -134,6 +135,9 @@ public partial class GameManager : Node3D, IGameWorld
 
     public override void _Ready()
     {
+        ParseCommandLine(); // первым делом: самопроверка подменяет путь к сохранению
+        Settings.Load();
+        Settings.Apply();
         SetupEnvironment();
 
         _sound = new SoundManager();
@@ -164,13 +168,19 @@ public partial class GameManager : Node3D, IGameWorld
         _mainMenu = new MainMenu();
         AddChild(_mainMenu);
         _mainMenu.NewGameRequested += StartNewGame;
+        _mainMenu.ContinueRequested += ContinueGame;
+        _mainMenu.SettingsRequested += OpenSettings;
 
         _pauseMenu = new PauseMenu();
         AddChild(_pauseMenu);
         _pauseMenu.ResumeRequested += Resume;
-        _pauseMenu.MainMenuRequested += ShowMainMenu;
+        _pauseMenu.SettingsRequested += OpenSettings;
+        _pauseMenu.SaveAndExitRequested += SaveAndExit;
 
-        ParseCommandLine();
+        _settingsMenu = new SettingsMenu();
+        AddChild(_settingsMenu);
+        _settingsMenu.Closed += OnSettingsClosed;
+
         ShowMainMenu();
     }
 
@@ -196,6 +206,16 @@ public partial class GameManager : Node3D, IGameWorld
 
         if (@event is not InputEventKey { Pressed: true, Echo: false } key)
             return;
+
+        if (_settingsMenu.Visible)
+        {
+            if (key.PhysicalKeycode == Key.Escape)
+            {
+                _settingsMenu.Close();
+                GetViewport().SetInputAsHandled();
+            }
+            return;
+        }
 
         switch (key.PhysicalKeycode)
         {
@@ -312,9 +332,32 @@ public partial class GameManager : Node3D, IGameWorld
         _pauseMenu.Visible = false;
     }
 
+    private void SaveAndExit()
+    {
+        SaveRun();
+        ShowMainMenu();
+    }
+
+    /// <summary>Настройки открываются и из главного меню, и из паузы; на время прячем меню под ними.</summary>
+    private void OpenSettings()
+    {
+        _mainMenu.Visible = false;
+        _pauseMenu.Visible = false;
+        _settingsMenu.Open();
+    }
+
+    private void OnSettingsClosed()
+    {
+        if (_state == GameState.Menu)
+            _mainMenu.ShowMain();
+        else if (_state == GameState.Paused)
+            _pauseMenu.Open();
+    }
+
     private void GameOver(Enemy killer)
     {
         _state = GameState.GameOver;
+        SaveSystem.Delete(); // смерть окончательна — продолжить этот забег нельзя
         UpdateHud();
         _sound.Play(Sound.Death);
         _camera.Shake(0.4f);
@@ -366,6 +409,8 @@ public partial class GameManager : Node3D, IGameWorld
             _hud.AddMessage($"Этаж {_floor}. Здесь опаснее.", InfoColor);
         if (_merchant != null)
             _hud.AddMessage("Где-то на этаже звенят монеты — здесь есть торговец.", InfoColor);
+
+        SaveRun(); // автосохранение в начале каждого этажа
     }
 
     /// <summary>

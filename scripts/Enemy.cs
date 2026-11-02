@@ -70,6 +70,29 @@ public partial class Enemy : Actor
         BodyMaterial.AlbedoColor = DisplayColor;
     }
 
+    public static EnemyType FindType(string name) =>
+        name == BossType.Name ? BossType : Array.Find(Types, type => type.Name == name);
+
+    public EnemySave CreateSave() => new()
+    {
+        Type = Type.Name,
+        X = GridPos.X,
+        Y = GridPos.Y,
+        Hp = Hp,
+        Frozen = FrozenTurns,
+        Alerted = Alerted,
+        Boss = IsBoss,
+    };
+
+    /// <summary>Вернуть состояние из сохранения (вызывается после Setup).</summary>
+    public void RestoreState(EnemySave save)
+    {
+        SetHp(Math.Max(save.Hp, 1));
+        Alerted = save.Alerted;
+        if (save.Frozen > 0)
+            Freeze(save.Frozen);
+    }
+
     public void Setup(EnemyType type, int floor)
     {
         Type = type;
