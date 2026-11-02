@@ -160,7 +160,8 @@ public partial class GameManager : Node3D, IGameWorld
 
         _player = new Player();
         AddChild(_player);
-        _player.ActionRequested += OnPlayerAction;
+        _player.ActionRequested += OnPlayerPressed;
+        _player.WalkRequested += OnWalkRequested;
 
         _camera = new CameraRig { Target = _player };
         AddChild(_camera);
@@ -529,6 +530,18 @@ public partial class GameManager : Node3D, IGameWorld
 
     // ---------- Ход игрока ----------
 
+    /// <summary>
+    /// Ручное нажатие клавиши движения. Если враг был виден до или после этого шага,
+    /// удержание клавиши не запустит автоходьбу — в бою каждый ход делается осознанно.
+    /// </summary>
+    private void OnPlayerPressed(Vector2I direction)
+    {
+        bool enemyBefore = AnyEnemyVisible();
+        OnPlayerAction(direction);
+        if (enemyBefore || AnyEnemyVisible())
+            StopWalking("враг в поле зрения при нажатии");
+    }
+
     private void OnPlayerAction(Vector2I direction)
     {
         if (_state != GameState.Playing)
@@ -578,6 +591,60 @@ public partial class GameManager : Node3D, IGameWorld
 
         EndPlayerTurn();
     }
+
+    /// <summary>
+    /// Умная ходьба (клавиша зажата): делаем шаг, только если это спокойное перемещение,
+    /// и останавливаемся, как только происходит что-то, на что игрок должен обратить внимание.
+    /// Атаковать, открывать двери и сундуки при удержании нельзя — только отдельным нажатием.
+    /// </summary>
+    private void OnWalkRequested(Vector2I direction)
+    {
+        var target = _player.GridPos + direction;
+        string blocker = _state != GameState.Playing ? "открыто окно"
+            : AnyEnemyVisible() ? "виден враг"
+            : !_map.CanMove(_player.GridPos, target) ? "стена"
+            : IsOccupied(target) ? "клетка занята"
+            : _map.Get(target) == Tile.Door ? "закрытая дверь"
+            : null;
+        if (blocker != null)
+        {
+            StopWalking(blocker);
+            return;
+        }
+
+        int hpBefore = _player.Hp;
+        int floorBefore = _floor;
+        int interestingBefore = VisibleInterestingThings();
+        bool steppingOnSomething = _floorItems.ContainsKey(target) || _map.Get(target) == Tile.Stairs;
+
+        OnPlayerAction(direction);
+
+        string reason = _state != GameState.Playing ? "открылось окно или смерть"
+            : _floor != floorBefore ? "новый этаж"
+            : _player.Hp < hpBefore ? "получен урон"
+            : steppingOnSomething ? "наступил на предмет или лестницу"
+            : AnyEnemyVisible() ? "показался враг"
+            : VisibleInterestingThings() > interestingBefore ? "показался предмет, сундук или торговец"
+            : null;
+        if (reason != null)
+            StopWalking(reason);
+    }
+
+    /// <summary>Причина последней остановки — её печатает самопроверка, чтобы ловить ложные остановки.</summary>
+    private string _lastWalkStopReason;
+
+    private void StopWalking(string reason)
+    {
+        _lastWalkStopReason = reason;
+        _player.StopWalking();
+    }
+
+    private bool AnyEnemyVisible() => _enemies.Any(enemy => _visible.Contains(enemy.GridPos));
+
+    private int VisibleInterestingThings() =>
+        _floorItems.Keys.Count(_visible.Contains) +
+        _chests.Keys.Count(_visible.Contains) +
+        (_merchant != null && _visible.Contains(_merchant.GridPos) ? 1 : 0);
 
     /// <summary>После любого действия игрока, которое тратит ход, ходят враги и тикают эффекты.</summary>
     private void EndPlayerTurn()

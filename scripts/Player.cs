@@ -15,8 +15,23 @@ public partial class Player : Actor
     private const int RegenInterval = 5; // регенерация срабатывает раз в столько ходов
     private const float InvisibleAlpha = 0.3f;
 
-    /// <summary>Направление шага. Vector2I.Zero означает «пропустить ход».</summary>
+    // Умная ходьба: сколько держать клавишу до начала автоходьбы и пауза между её шагами (секунды)
+    private const double HoldDelay = 0.3;
+    private const double WalkInterval = 0.14;
+
+    /// <summary>Нажатие клавиши: шаг, атака или (Vector2I.Zero) пропуск хода. Одно нажатие — одно действие.</summary>
     public event Action<Vector2I> ActionRequested;
+
+    /// <summary>
+    /// Клавиша удерживается — просьба сделать ещё один шаг. GameManager выполняет его, только если это
+    /// безопасное перемещение, и останавливает ходьбу через StopWalking, когда происходит что-то важное.
+    /// </summary>
+    public event Action<Vector2I> WalkRequested;
+
+    private Key _heldKey = Key.None;
+    private Vector2I _heldDirection;
+    private double _holdTimer;
+    private bool _walkStopped;
 
     public ClassDef Class { get; private set; } = ClassCatalog.Warrior;
     public int Level { get; private set; }
@@ -264,6 +279,32 @@ public partial class Player : Actor
         Hp = Mathf.Min(Hp, MaxHp); // сняли амулет жизни — здоровье не может быть выше максимума
     }
 
+    /// <summary>Остановить автоходьбу: дальше идти можно только отпустив клавишу и нажав снова.</summary>
+    public void StopWalking() => _walkStopped = true;
+
+    /// <summary>
+    /// Автоходьба по таймеру. Встроенный автоповтор клавиатуры не используем: он слишком быстрый
+    /// и зависит от настроек Windows. Вместо этого каждый кадр проверяем, держится ли клавиша.
+    /// </summary>
+    public override void _Process(double delta)
+    {
+        if (_heldKey == Key.None)
+            return;
+        if (!Input.IsPhysicalKeyPressed(_heldKey))
+        {
+            _heldKey = Key.None; // отпустили — следующее нажатие начнёт всё заново
+            return;
+        }
+        if (_walkStopped)
+            return;
+
+        _holdTimer -= delta;
+        if (_holdTimer > 0)
+            return;
+        _holdTimer = WalkInterval;
+        WalkRequested?.Invoke(_heldDirection);
+    }
+
     public override void _UnhandledInput(InputEvent @event)
     {
         if (@event is not InputEventKey { Pressed: true } key)
@@ -271,24 +312,35 @@ public partial class Player : Actor
 
         // PhysicalKeycode — физическое положение клавиши, поэтому WASD работает
         // и при русской раскладке (там на этих клавишах «ЦФЫВ»)
-        Vector2I? direction = key.PhysicalKeycode switch
-        {
-            Key.W or Key.Up or Key.Kp8 => new Vector2I(0, -1),
-            Key.S or Key.Down or Key.Kp2 => new Vector2I(0, 1),
-            Key.A or Key.Left or Key.Kp4 => new Vector2I(-1, 0),
-            Key.D or Key.Right or Key.Kp6 => new Vector2I(1, 0),
-            Key.Q or Key.Kp7 => new Vector2I(-1, -1),
-            Key.E or Key.Kp9 => new Vector2I(1, -1),
-            Key.Z or Key.Kp1 => new Vector2I(-1, 1),
-            Key.C or Key.Kp3 => new Vector2I(1, 1),
-            Key.Space or Key.Kp5 => Vector2I.Zero,
-            _ => null,
-        };
+        var direction = DirectionFor(key.PhysicalKeycode);
+        if (!direction.HasValue)
+            return;
+        GetViewport().SetInputAsHandled();
 
-        if (direction.HasValue)
-        {
-            ActionRequested?.Invoke(direction.Value);
-            GetViewport().SetInputAsHandled();
-        }
+        // Echo — это автоповтор зажатой клавиши от системы. Его просто «съедаем»: повтором управляет _Process
+        if (key.Echo)
+            return;
+
+        // Сначала запоминаем удержание, потом сообщаем о нажатии: обработчик может сразу
+        // вызвать StopWalking (например, рядом враг), и этот запрет не должен потеряться
+        _heldKey = direction.Value != Vector2I.Zero ? key.PhysicalKeycode : Key.None; // пробел не повторяем
+        _heldDirection = direction.Value;
+        _holdTimer = HoldDelay;
+        _walkStopped = false;
+        ActionRequested?.Invoke(direction.Value);
     }
+
+    private static Vector2I? DirectionFor(Key key) => key switch
+    {
+        Key.W or Key.Up or Key.Kp8 => new Vector2I(0, -1),
+        Key.S or Key.Down or Key.Kp2 => new Vector2I(0, 1),
+        Key.A or Key.Left or Key.Kp4 => new Vector2I(-1, 0),
+        Key.D or Key.Right or Key.Kp6 => new Vector2I(1, 0),
+        Key.Q or Key.Kp7 => new Vector2I(-1, -1),
+        Key.E or Key.Kp9 => new Vector2I(1, -1),
+        Key.Z or Key.Kp1 => new Vector2I(-1, 1),
+        Key.C or Key.Kp3 => new Vector2I(1, 1),
+        Key.Space or Key.Kp5 => Vector2I.Zero,
+        _ => null,
+    };
 }

@@ -119,6 +119,18 @@ public partial class GameManager
         if (_frame == moveFrames + 1 && _state == GameState.Playing)
             OpenTestView();
 
+        // Проверка умной ходьбы: держим клавишу 1.6 секунды реального времени (не кадров —
+        // на мониторе 144 Гц кадры идут в 2.4 раза чаще, чем на 60 Гц), потом отпускаем
+        if (_screenshotView == "hold")
+        {
+            if (_testHeldKey != Key.None && Time.GetTicksMsec() - _holdStartMs >= 1600)
+                ReleaseHeldKey();
+            if (_testHeldKey != Key.None || _frame < moveFrames + 2)
+                return; // ждём, пока клавиша отпущена, и только потом делаем снимок
+            _screenshotView = "play"; // дальше — обычный снимок через 40 кадров
+            _frame = moveFrames + 1;
+        }
+
         if (_frame == moveFrames + 40)
         {
             GD.Print($"Самопроверка ({_player.Class.Name}, ур. {_player.Level}): этаж {_floor}, убито {_kills}, здоровье {_player.Hp}, " +
@@ -150,6 +162,9 @@ public partial class GameManager
             case "settings":
                 Pause();
                 OpenSettings();
+                break;
+            case "hold":
+                PressAndHoldOpenDirection();
                 break;
             case "reveal":
                 // Показать этаж целиком: удобно смотреть темы, двери, ловушки и декор
@@ -300,6 +315,61 @@ public partial class GameManager
                      $"{Percent(group.Count(r => r.Floor >= 5))} | {Percent(group.Count(r => r.Floor >= 10))} | " +
                      $"{Percent(group.Count(r => r.Victory))} | {group.Average(r => r.Level):F1} | {group.Count(r => r.Timeout)}");
         }
+    }
+
+    // ---------- Проверка удержания клавиши ----------
+
+    private Key _testHeldKey = Key.None;
+    private ulong _holdStartMs;
+    private int _holdStartFrame;
+    private int _turnsBeforeHold;
+    private bool _enemyVisibleAtHold;
+
+    /// <summary>
+    /// Нажимаем «настоящую» клавишу через Input.ParseInputEvent — так событие проходит тот же путь,
+    /// что и от клавиатуры, и Input.IsPhysicalKeyPressed видит её зажатой.
+    /// Выбираем направление, где впереди больше всего свободных клеток.
+    /// </summary>
+    private void PressAndHoldOpenDirection()
+    {
+        var keys = new Dictionary<Vector2I, Key>
+        {
+            [new Vector2I(0, -1)] = Key.W, [new Vector2I(0, 1)] = Key.S,
+            [new Vector2I(-1, 0)] = Key.A, [new Vector2I(1, 0)] = Key.D,
+        };
+        int FreeCells(Vector2I direction)
+        {
+            int count = 0;
+            var cell = _player.GridPos + direction;
+            while (_map.IsWalkable(cell) && count < 20)
+            {
+                count++;
+                cell += direction;
+            }
+            return count;
+        }
+        var best = keys.Keys.OrderByDescending(FreeCells).First();
+
+        _testHeldKey = keys[best];
+        _holdStartMs = Time.GetTicksMsec();
+        _holdStartFrame = _frame;
+        _turnsBeforeHold = _turns;
+        _enemyVisibleAtHold = AnyEnemyVisible();
+        GD.Print($"Удержание: клавиша {_testHeldKey}, свободно клеток впереди {FreeCells(best)}, враг виден: {_enemyVisibleAtHold}");
+        Input.ParseInputEvent(new InputEventKey { PhysicalKeycode = _testHeldKey, Keycode = _testHeldKey, Pressed = true });
+    }
+
+    private void ReleaseHeldKey()
+    {
+        if (_testHeldKey == Key.None)
+            return;
+        // Если окно теряло фокус, Godot сам «отпускает» все клавиши — тогда ходьба прервалась не из-за игры
+        GD.Print($"Удержание: клавиша всё ещё зажата: {Input.IsPhysicalKeyPressed(_testHeldKey)}, " +
+                 $"кадров за время удержания: {_frame - _holdStartFrame}");
+        Input.ParseInputEvent(new InputEventKey { PhysicalKeycode = _testHeldKey, Keycode = _testHeldKey, Pressed = false });
+        GD.Print($"Удержание: за 1.6 с прошло ходов: {_turns - _turnsBeforeHold}, враг виден сейчас: {AnyEnemyVisible()}, " +
+                 $"причина остановки: {_lastWalkStopReason ?? "не останавливался"}");
+        _testHeldKey = Key.None;
     }
 
     /// <summary>Грубая оценка полезности вещи для автопилота (пустой слот — ноль).</summary>
