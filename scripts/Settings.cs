@@ -10,11 +10,18 @@ public enum AnimationSpeed
     Instant,
 }
 
+public enum GraphicsQuality
+{
+    High,
+    Low,
+}
+
 /// <summary>Настройки игрока. Хранятся в user://settings.json.</summary>
 public class GameSettings
 {
     public int Volume { get; set; } = 80;
     public bool Fullscreen { get; set; }
+    public GraphicsQuality Graphics { get; set; } = GraphicsQuality.High;
     public AnimationSpeed Animation { get; set; } = AnimationSpeed.Normal;
     public bool DamageNumbers { get; set; } = true;
     public bool CameraShake { get; set; } = true;
@@ -28,6 +35,11 @@ public static class Settings
     private const string FilePath = "user://settings.json";
 
     public static GameSettings Current { get; private set; } = new();
+
+    /// <summary>Настройки применены — например, GameManager включает или выключает тяжёлые эффекты графики.</summary>
+    public static event System.Action Applied;
+
+    public static bool HighQuality => Current.Graphics == GraphicsQuality.High;
 
     /// <summary>Множитель длительности анимаций: 1 — обычные, 0.5 — быстрые, 0 — без анимаций.</summary>
     public static float AnimationScale => Current.Animation switch
@@ -67,5 +79,7 @@ public static class Settings
         var mode = Current.Fullscreen ? DisplayServer.WindowMode.Fullscreen : DisplayServer.WindowMode.Windowed;
         if (DisplayServer.WindowGetMode() != mode)
             DisplayServer.WindowSetMode(mode);
+
+        Applied?.Invoke();
     }
 }

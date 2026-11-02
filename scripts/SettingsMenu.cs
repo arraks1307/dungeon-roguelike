@@ -15,6 +15,7 @@ public partial class SettingsMenu : CanvasLayer
     private Label _volumeValue;
     private CheckButton _fullscreen;
     private OptionButton _animation;
+    private OptionButton _graphics;
     private CheckButton _damageNumbers;
     private CheckButton _shake;
 
@@ -55,6 +56,18 @@ public partial class SettingsMenu : CanvasLayer
         };
         animationRow.AddChild(_animation);
 
+        var graphicsRow = CreateRow(column, "Графика");
+        _graphics = new OptionButton { CustomMinimumSize = new Vector2(220f, 36f) };
+        _graphics.AddThemeFontSizeOverride("font_size", 18);
+        _graphics.AddItem("Высокая");
+        _graphics.AddItem("Низкая (быстрее)");
+        _graphics.ItemSelected += index =>
+        {
+            Settings.Current.Graphics = (GraphicsQuality)index;
+            Changed();
+        };
+        graphicsRow.AddChild(_graphics);
+
         _fullscreen = CreateToggle(column, "Полный экран", on => Settings.Current.Fullscreen = on);
         _damageNumbers = CreateToggle(column, "Цифры урона", on => Settings.Current.DamageNumbers = on);
         _shake = CreateToggle(column, "Тряска камеры", on => Settings.Current.CameraShake = on);
@@ -70,6 +83,7 @@ public partial class SettingsMenu : CanvasLayer
         _volume.SetValueNoSignal(current.Volume);
         _volumeValue.Text = $"{current.Volume}%";
         _animation.Selected = (int)current.Animation;
+        _graphics.Selected = (int)current.Graphics;
         _fullscreen.SetPressedNoSignal(current.Fullscreen);
         _damageNumbers.SetPressedNoSignal(current.DamageNumbers);
         _shake.SetPressedNoSignal(current.CameraShake);

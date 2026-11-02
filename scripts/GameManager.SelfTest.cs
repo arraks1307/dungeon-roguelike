@@ -18,6 +18,7 @@ public partial class GameManager
     private int _startFloor = 1;
     private bool _godMode; // игрок не может погибнуть
     private ClassDef _testClass; // null — случайный класс
+    private GraphicsQuality? _testGraphics; // качество графики только на время проверки
     private DifficultyDef _testDifficulty; // null — по очереди или обычная
 
     // Симуляция: N забегов подряд без графики, в конце — сводка для настройки баланса
@@ -64,6 +65,8 @@ public partial class GameManager
                 };
             else if (arg.StartsWith("--simulate="))
                 _simulateGames = int.Parse(arg["--simulate=".Length..]);
+            else if (arg.StartsWith("--graphics="))
+                _testGraphics = arg["--graphics=".Length..] == "low" ? GraphicsQuality.Low : GraphicsQuality.High;
         }
 
         // Самопроверка не должна трогать настоящее сохранение игрока
@@ -133,7 +136,7 @@ public partial class GameManager
 
         if (_frame == moveFrames + 40)
         {
-            GD.Print($"Самопроверка ({_player.Class.Name}, ур. {_player.Level}): этаж {_floor}, убито {_kills}, здоровье {_player.Hp}, " +
+            GD.Print($"Самопроверка ({_player.Class.Name}, ур. {_player.Level}, FPS {Engine.GetFramesPerSecond()}): этаж {_floor}, убито {_kills}, здоровье {_player.Hp}, " +
                      $"золото {_player.Gold}, предметов {_player.Inventory.Items.Count}, состояние {_state}");
             GetViewport().GetTexture().GetImage().SavePng(_screenshotPath);
             GetTree().Quit();

@@ -72,8 +72,8 @@ public partial class DungeonRenderer : Node3D
             }
         }
 
-        _floors = CreateMultiMesh(new BoxMesh { Size = new Vector3(1f, 0.1f, 1f) }, floorCells, -0.05f, _floorIndex);
-        _walls = CreateMultiMesh(new BoxMesh { Size = new Vector3(1f, 1f, 1f) }, wallCells, 0.5f, _wallIndex);
+        _floors = CreateMultiMesh(new BoxMesh { Size = new Vector3(1f, 0.1f, 1f), Material = SurfaceMaterials.Floor }, floorCells, -0.05f, _floorIndex);
+        _walls = CreateMultiMesh(new BoxMesh { Size = new Vector3(1f, 1f, 1f), Material = SurfaceMaterials.Wall }, wallCells, 0.5f, _wallIndex);
 
         _stairs = new MeshInstance3D
         {
@@ -195,9 +195,13 @@ public partial class DungeonRenderer : Node3D
 
     private void CreateSecretWall(Vector2I cell)
     {
+        // Копия материала настоящих стен (Duplicate) — иначе потайную дверь выдала бы другая текстура.
+        // Своя копия нужна, чтобы менять ей цвет (туман войны) отдельно от всех стен.
+        var material = (StandardMaterial3D)SurfaceMaterials.Wall.Duplicate();
+        material.AlbedoColor = Colors.Black;
         var wall = new MeshInstance3D
         {
-            Mesh = new BoxMesh { Size = Vector3.One, Material = new StandardMaterial3D { AlbedoColor = Colors.Black, Roughness = 0.9f } },
+            Mesh = new BoxMesh { Size = Vector3.One, Material = material },
             Position = new Vector3(cell.X, 0.5f, cell.Y),
         };
         AddChild(wall);
@@ -347,9 +351,7 @@ public partial class DungeonRenderer : Node3D
     private MultiMesh CreateMultiMesh(PrimitiveMesh mesh, List<Vector2I> cells, float height,
         Dictionary<Vector2I, int> index)
     {
-        // Цвет каждого куба задаётся отдельно (UseColors), а материал умножает его на белый
-        mesh.Material = new StandardMaterial3D { AlbedoColor = Colors.White, VertexColorUseAsAlbedo = true, Roughness = 0.9f };
-
+        // Цвет каждого куба задаётся отдельно (UseColors), а материал (SurfaceMaterials) умножает его на текстуру камня
         var multiMesh = new MultiMesh
         {
             TransformFormat = MultiMesh.TransformFormatEnum.Transform3D,

@@ -23,6 +23,8 @@ public partial class GameManager
         var theme = _map.Theme;
         _environment.AmbientLightColor = theme.Ambient;
         _environment.AmbientLightEnergy = theme.AmbientEnergy;
+        // Туман подкрашен в цвет темы: синеватый в подземелье, зеленоватый в пещерах и крипте
+        _environment.VolumetricFogAlbedo = theme.Ambient.Lightened(0.4f);
     }
 
     // ---------- Двери ----------

@@ -72,16 +72,113 @@ public partial class Player : Actor
         BodyMaterial.Transparency = BaseMaterial3D.TransparencyEnum.Alpha; // для невидимости
 
         // «Факел» — тёплый точечный свет, который двигается вместе с игроком
-        AddChild(new OmniLight3D
+        // Свет повыше над головой — иначе голова пересвечена. Сам герой тень от него не отбрасывает
+        // (CastShadow = Off ниже), иначе под ним лежал бы тёмный круг; враги и стены — отбрасывают
+        _torchLight = new OmniLight3D
         {
-            Position = new Vector3(0f, 1.6f, 0f),
+            Position = new Vector3(0f, 2.4f, 0f),
             LightColor = new Color(1f, 0.75f, 0.45f),
-            LightEnergy = 1.8f,
-            OmniRange = 8f,
+            LightEnergy = 2.1f,
+            OmniRange = 9f,
             ShadowEnabled = true,
-        });
+        };
+        Body.CastShadow = GeometryInstance3D.ShadowCastingSetting.Off;
+        AddChild(_torchLight);
+
+        _dust = CreateDust();
+        AddChild(_dust);
 
         ResetStats(ClassCatalog.Warrior);
+        SetHighQuality(Settings.HighQuality);
+    }
+
+    private OmniLight3D _torchLight;
+    private CpuParticles3D _dust;
+    private Node3D _gear;
+
+    /// <summary>На низком качестве — без теней от факела и без пылинок.</summary>
+    public void SetHighQuality(bool high)
+    {
+        _torchLight.ShadowEnabled = high;
+        _dust.Emitting = high;
+        _dust.Visible = high;
+    }
+
+    /// <summary>
+    /// Пылинки, медленно парящие вокруг героя. Материал обычный (не светящийся), поэтому пылинки
+    /// видны только там, куда падает свет факела, — как пыль в луче света.
+    /// LocalCoords = false: родившись, пылинка остаётся на месте в мире, а не «едет» за героем.
+    /// </summary>
+    private static CpuParticles3D CreateDust() => new()
+    {
+        Amount = 45,
+        Lifetime = 7f,
+        Preprocess = 7f, // при появлении сразу «заполняем» воздух, а не ждём 7 секунд
+        LocalCoords = false,
+        EmissionShape = CpuParticles3D.EmissionShapeEnum.Box,
+        EmissionBoxExtents = new Vector3(5f, 0.8f, 5f),
+        Position = new Vector3(0f, 1.1f, 0f),
+        Direction = Vector3.Up,
+        Spread = 180f,
+        Gravity = Vector3.Zero,
+        InitialVelocityMin = 0.03f,
+        InitialVelocityMax = 0.12f,
+        ScaleAmountMin = 0.5f,
+        ScaleAmountMax = 1.2f,
+        Mesh = new QuadMesh
+        {
+            Size = new Vector2(0.035f, 0.035f),
+            Material = new StandardMaterial3D
+            {
+                AlbedoColor = new Color(1f, 0.93f, 0.8f, 0.55f),
+                Transparency = BaseMaterial3D.TransparencyEnum.Alpha,
+                BillboardMode = BaseMaterial3D.BillboardModeEnum.Enabled,
+            },
+        },
+    };
+
+    /// <summary>
+    /// Голова и снаряжение по классу: воин — шлем, меч и щит; следопыт — капюшон и лук;
+    /// маг — остроконечная шляпа и посох со светящейся сферой. Детали крепятся к телу,
+    /// поэтому двигаются вместе с ним при атаке и «дыхании».
+    /// </summary>
+    private void BuildGear()
+    {
+        _gear?.QueueFree();
+        _gear = new Node3D();
+        Body.AddChild(_gear);
+
+        var skin = new Color(0.95f, 0.8f, 0.68f);
+        var dark = Class.Color.Darkened(0.45f);
+        var steel = new Color(0.78f, 0.8f, 0.86f);
+        var wood = new Color(0.45f, 0.28f, 0.14f);
+        _gear.AddChild(Part(new SphereMesh { Radius = 0.15f, Height = 0.3f }, skin, new Vector3(0f, 0.55f, 0.02f)));
+
+        switch (Class.Class)
+        {
+            case PlayerClass.Warrior:
+                _gear.AddChild(Part(new SphereMesh { Radius = 0.165f, Height = 0.2f }, steel, new Vector3(0f, 0.63f, 0f)));
+                _gear.AddChild(Part(new BoxMesh { Size = new Vector3(0.05f, 0.62f, 0.03f) }, steel, new Vector3(0.31f, 0.08f, 0.12f), rotationDegrees: new Vector3(0f, 0f, -18f)));
+                _gear.AddChild(Part(new BoxMesh { Size = new Vector3(0.2f, 0.04f, 0.05f) }, wood, new Vector3(0.27f, -0.15f, 0.12f)));
+                _gear.AddChild(Part(new CylinderMesh { TopRadius = 0.2f, BottomRadius = 0.2f, Height = 0.05f }, dark, new Vector3(-0.29f, 0.02f, 0.06f), rotationDegrees: new Vector3(0f, 0f, 90f)));
+                break;
+
+            case PlayerClass.Ranger:
+                _gear.AddChild(Part(new CylinderMesh { TopRadius = 0.04f, BottomRadius = 0.19f, Height = 0.28f }, dark, new Vector3(0f, 0.66f, -0.02f)));
+                _gear.AddChild(Part(new TorusMesh { InnerRadius = 0.3f, OuterRadius = 0.34f }, wood, new Vector3(0.3f, 0.05f, 0.06f), rotationDegrees: new Vector3(0f, 0f, 90f)));
+                _gear.AddChild(Part(new BoxMesh { Size = new Vector3(0.12f, 0.36f, 0.12f) }, wood.Darkened(0.2f), new Vector3(-0.12f, 0.15f, -0.24f), rotationDegrees: new Vector3(15f, 0f, 0f)));
+                break;
+
+            case PlayerClass.Mage:
+                _gear.AddChild(Part(new CylinderMesh { TopRadius = 0.18f, BottomRadius = 0.18f, Height = 0.03f }, dark, new Vector3(0f, 0.66f, 0f)));
+                _gear.AddChild(Part(new CylinderMesh { TopRadius = 0f, BottomRadius = 0.13f, Height = 0.4f }, dark, new Vector3(0f, 0.86f, 0f)));
+                _gear.AddChild(Part(new CylinderMesh { TopRadius = 0.025f, BottomRadius = 0.025f, Height = 1.05f }, wood, new Vector3(0.32f, 0.08f, 0.04f)));
+                _gear.AddChild(Part(new SphereMesh { Radius = 0.08f, Height = 0.16f }, Class.Color.Lightened(0.3f), new Vector3(0.32f, 0.64f, 0.04f), glow: 3f));
+                break;
+        }
+
+        foreach (var part in _gear.GetChildren())
+            ((GeometryInstance3D)part).CastShadow = GeometryInstance3D.ShadowCastingSetting.Off;
     }
 
     public void ResetStats(ClassDef playerClass)
@@ -117,6 +214,7 @@ public partial class Player : Actor
     {
         Class = playerClass;
         BaseColor = playerClass.Color;
+        BuildGear();
     }
 
     /// <summary>Добавить опыт. Возвращает, сколько уровней получено (за один раз может быть больше одного).</summary>
@@ -288,6 +386,10 @@ public partial class Player : Actor
     /// </summary>
     public override void _Process(double delta)
     {
+        base._Process(delta); // «дыхание» из Actor
+        if (_gear != null)
+            _gear.Visible = !IsInvisible; // невидимка прячет и снаряжение
+
         if (_heldKey == Key.None)
             return;
         if (!Input.IsPhysicalKeyPressed(_heldKey))

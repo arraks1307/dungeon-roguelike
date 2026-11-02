@@ -159,8 +159,34 @@ public partial class Enemy : Actor
                 break;
         }
 
+        AddEyes(type);
         if (type.Behavior == EnemyBehavior.Ghost)
             MakeTranslucent(0.45f);
+    }
+
+    /// <summary>
+    /// Светящиеся глаза на «лицевой» стороне (+Z — сторона, обращённая к камере).
+    /// Даже простая фигура с глазами читается как существо, а в темноте глаза видны первыми.
+    /// </summary>
+    private void AddEyes(EnemyType type)
+    {
+        // Положение глаз относительно центра тела зависит от формы: (половина расстояния между глазами, высота, глубина)
+        var (spread, height, depth) = type.Shape switch
+        {
+            EnemyShape.Sphere => (0.09f, 0.06f, 0.26f),
+            EnemyShape.Box => (0.13f, 0.2f, 0.31f),
+            EnemyShape.Cone => (0.05f, 0.12f, 0.16f),
+            _ => (0.07f, 0.2f, 0.18f),
+        };
+        var color = type.Name switch
+        {
+            "Орк" or "Мимик" => new Color(1f, 0.35f, 0.2f),
+            "Призрак" => new Color(0.55f, 0.9f, 1f),
+            "Скелет" => new Color(0.4f, 1f, 0.6f),
+            _ => new Color(1f, 0.95f, 0.75f),
+        };
+        foreach (float side in new[] { -1f, 1f })
+            Body.AddChild(Part(new SphereMesh { Radius = 0.04f, Height = 0.08f }, color, new Vector3(side * spread, height, depth), glow: 2.5f));
     }
 
     /// <summary>У каждого босса свой силуэт, чтобы его сразу можно было узнать.</summary>

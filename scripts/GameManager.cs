@@ -149,6 +149,8 @@ public partial class GameManager : Node3D, IGameWorld
     {
         ParseCommandLine(); // первым делом: самопроверка подменяет путь к сохранению
         Settings.Load();
+        if (_testGraphics.HasValue)
+            Settings.Current.Graphics = _testGraphics.Value; // только в памяти, файл настроек не меняется
         Settings.Apply();
         SetupEnvironment();
 
@@ -288,21 +290,6 @@ public partial class GameManager : Node3D, IGameWorld
                 return;
         }
         GetViewport().SetInputAsHandled();
-    }
-
-    private void SetupEnvironment()
-    {
-        var environment = _environment = new Godot.Environment
-        {
-            BackgroundMode = Godot.Environment.BGMode.Color,
-            BackgroundColor = new Color(0.02f, 0.02f, 0.03f),
-            AmbientLightSource = Godot.Environment.AmbientSource.Color,
-            AmbientLightColor = new Color(0.35f, 0.4f, 0.6f),
-            AmbientLightEnergy = 0.5f,
-            TonemapMode = Godot.Environment.ToneMapper.Filmic,
-            GlowEnabled = true,
-        };
-        AddChild(new WorldEnvironment { Environment = environment });
     }
 
     // ---------- Состояния игры ----------

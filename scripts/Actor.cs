@@ -30,6 +30,34 @@ public partial class Actor : Node3D
     private Node3D _healthBar;
     private MeshInstance3D _healthFill;
 
+    // «Дыхание»: у каждого своя фаза, чтобы все существа не дышали в унисон
+    private readonly float _breathPhase = (float)GD.RandRange(0.0, Mathf.Tau);
+    private float _breathTime;
+
+    public override void _Process(double delta)
+    {
+        if (Body == null || Settings.AnimationScale == 0f)
+            return;
+        _breathTime += (float)delta;
+        float breath = Mathf.Sin(_breathTime * 2.2f + _breathPhase);
+        // Чуть вытягиваемся вверх и сужаемся по бокам — объём «тела» визуально сохраняется
+        Body.Scale = new Vector3(1f - 0.015f * breath, 1f + 0.035f * breath, 1f - 0.015f * breath);
+    }
+
+    /// <summary>Деталь модели (голова, оружие, глаза): простая фигура с цветом и, по желанию, свечением.</summary>
+    protected static MeshInstance3D Part(PrimitiveMesh mesh, Color color, Vector3 position, float glow = 0f, Vector3? rotationDegrees = null)
+    {
+        var material = new StandardMaterial3D { AlbedoColor = color, Roughness = 0.55f };
+        if (glow > 0f)
+        {
+            material.EmissionEnabled = true;
+            material.Emission = color;
+            material.EmissionEnergyMultiplier = glow;
+        }
+        mesh.Material = material;
+        return new MeshInstance3D { Mesh = mesh, Position = position, RotationDegrees = rotationDegrees ?? Vector3.Zero };
+    }
+
     /// <summary>Цвет, к которому тело возвращается после вспышки урона (заморозка, невидимость меняют его).</summary>
     protected virtual Color DisplayColor => BaseColor;
 
