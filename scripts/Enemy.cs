@@ -166,7 +166,7 @@ public partial class Enemy : Actor
     /// <summary>У каждого босса свой силуэт, чтобы его сразу можно было узнать.</summary>
     private void CreateBossBody(EnemyType type)
     {
-        var gold = Ui.TitleColor;
+        var gold = new Color(1f, 0.8f, 0.3f);
         switch (type.Behavior)
         {
             case EnemyBehavior.Necromancer:

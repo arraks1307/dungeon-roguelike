@@ -23,6 +23,8 @@ public enum Sound
     Door,
     Chest,
     Secret,
+    UiHover,
+    UiClick,
 }
 
 /// <summary>
@@ -81,6 +83,9 @@ public partial class SoundManager : Node
         Add(Sound.Chest, 0.4f, -8f, t => Arpeggio(t, 0.06f, 1047f, 1319f, 1568f, 2093f, 1568f, 2093f) * 0.4f);
         // Найден секрет: загадочный подъём
         Add(Sound.Secret, 0.5f, -8f, t => Arpeggio(t, 0.12f, 392f, 523f, 659f, 784f) * 0.45f);
+        // Интерфейс: едва слышный «тик» при выборе кнопки и мягкий «клик» при нажатии
+        Add(Sound.UiHover, 0.03f, -24f, t => Sine(1600f, t) * Decay(t, 120f));
+        Add(Sound.UiClick, 0.08f, -14f, t => Sine(Chirp(700f, 1000f, 0.08f, t)) * 0.6f * Decay(t, 40f));
         // Смерть игрока: долгий спуск
         Add(Sound.Death, 0.9f, -4f, t => Square(Chirp(300f, 40f, 0.9f, t)) * 0.45f * Decay(t, 2.5f));
     }

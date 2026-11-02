@@ -103,6 +103,7 @@ public partial class GameManager
             _player.Visible = true;
             _camera.MenuMode = false;
             _player.RestoreSave(data.Player);
+            UiTheme.SetAccent(_player.Class.Color.Lightened(0.15f));
             _camera.SnapToTarget();
 
             foreach (var save in data.Enemies)

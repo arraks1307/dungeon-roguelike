@@ -154,6 +154,7 @@ public partial class GameManager : Node3D, IGameWorld
 
         _sound = new SoundManager();
         AddChild(_sound);
+        Ui.PlaySound = _sound.Play; // кнопки интерфейса щёлкают через общий SoundManager
 
         _renderer = new DungeonRenderer();
         AddChild(_renderer);
@@ -337,6 +338,7 @@ public partial class GameManager : Node3D, IGameWorld
         _classSelect.Visible = false;
         _camera.MenuMode = true;
         _camera.MenuCenter = new Vector3(MapWidth / 2f, 0f, MapHeight / 2f);
+        UiTheme.SetAccent(UiTheme.DefaultAccent);
         _camera.SnapToTarget();
         _mainMenu.ShowMain();
     }
@@ -357,6 +359,7 @@ public partial class GameManager : Node3D, IGameWorld
         _hud.ClearMessages();
         _player.Visible = true;
         _player.ResetStats(playerClass);
+        UiTheme.SetAccent(playerClass.Color.Lightened(0.15f)); // интерфейс окрашивается в цвет героя
         for (int i = 0; i < difficulty.BonusPotions; i++)
             _player.Inventory.TryAdd(new Item(ItemCatalog.HealthPotion));
         _camera.MenuMode = false;

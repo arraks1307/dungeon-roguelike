@@ -56,13 +56,16 @@ public readonly record struct Stats(
         a.Thorns - b.Thorns, a.Regen - b.Regen, a.Vision - b.Vision, a.FireDamage - b.FireDamage);
 
     /// <summary>Текстовые строки для ненулевых бонусов, например «+2 к атаке».</summary>
-    public List<string> Describe()
+    public List<string> Describe() => DescribeSigned().Select(part => part.Text).ToList();
+
+    /// <summary>То же, но вместе со значением — по знаку окна красят строку в зелёный или красный.</summary>
+    public List<(int Value, string Text)> DescribeSigned()
     {
-        var lines = new List<string>();
+        var parts = new List<(int, string)>();
         void Add(int value, string text)
         {
             if (value != 0)
-                lines.Add($"{(value > 0 ? "+" : "−")}{Math.Abs(value)}{text}");
+                parts.Add((value, $"{(value > 0 ? "+" : "−")}{Math.Abs(value)}{text}"));
         }
         Add(Attack, " к атаке");
         Add(Defense, " к защите");
@@ -73,7 +76,7 @@ public readonly record struct Stats(
         Add(Regen, " регенерации");
         Add(Vision, " к обзору");
         Add(FireDamage, " урона огнём");
-        return lines;
+        return parts;
     }
 }
 
@@ -289,33 +292,62 @@ public static class ItemCatalog
     }
 }
 
-/// <summary>Подробное описание предмета для окон инвентаря и магазина.</summary>
+/// <summary>
+/// Подробное описание предмета для окон инвентаря и магазина — в разметке BBCode для RichTextLabel:
+/// [color=#rrggbb]текст[/color] красит кусок текста. Бонусы сравнения — зелёные, потери — красные.
+/// </summary>
 public static class ItemInfo
 {
-    public static string Describe(Item item, Inventory inventory)
+    public static string Describe(Item item, Inventory inventory, string actionHint = null)
     {
-        var lines = new List<string> { $"{item.Name}  ({item.RarityName})" };
+        var text = new System.Text.StringBuilder();
+        text.Append($"[font_size=20]{Colored(item.Name, item.RarityColor)}[/font_size]\n");
+        string kind = item.IsEquipment ? Inventory.SlotName(item.Slot).ToLower() : "расходник";
+        text.Append(Colored($"Редкость: {item.RarityName}  •  {kind}", UiTheme.TextMuted)).Append("\n\n");
 
         if (!item.IsEquipment)
         {
-            lines.Add(item.ShortEffect());
-            return string.Join("\n", lines);
+            text.Append(item.ShortEffect()).Append('\n');
+        }
+        else
+        {
+            foreach (var (_, line) in item.Stats.DescribeSigned())
+                text.Append(line).Append('\n');
+
+            // Сравнение с тем, что сейчас надето в этот же слот
+            var equipped = inventory.GetEquipped(item.Slot);
+            if (equipped == null)
+            {
+                text.Append('\n').Append(Colored("Слот пуст — всё это будет прибавкой.", UiTheme.Positive)).Append('\n');
+            }
+            else if (equipped != item)
+            {
+                text.Append('\n').Append(Colored($"Вместо «{equipped.Name}»:", UiTheme.TextMuted)).Append('\n');
+                var difference = (item.Stats - equipped.Stats).DescribeSigned();
+                if (difference.Count == 0)
+                    text.Append(Colored("без изменений", UiTheme.TextMuted)).Append('\n');
+                foreach (var (value, line) in difference)
+                    text.Append(Colored(line, value > 0 ? UiTheme.Positive : UiTheme.Negative)).Append('\n');
+            }
+            else
+            {
+                text.Append('\n').Append(Colored("Сейчас надето", UiTheme.TextMuted)).Append('\n');
+            }
         }
 
-        lines.AddRange(item.Stats.Describe());
-
-        // Сравнение с тем, что сейчас надето в этот же слот
-        var equipped = inventory.GetEquipped(item.Slot);
-        if (equipped == null)
-        {
-            lines.Add("Слот пуст — всё это будет чистой прибавкой.");
-        }
-        else if (equipped != item)
-        {
-            var difference = (item.Stats - equipped.Stats).Describe();
-            lines.Add($"По сравнению с «{equipped.Name}»: " +
-                      (difference.Count == 0 ? "без изменений" : string.Join(", ", difference)));
-        }
-        return string.Join("\n", lines);
+        if (actionHint != null)
+            text.Append('\n').Append(Colored(actionHint, UiTheme.Accent));
+        return text.ToString();
     }
+
+    /// <summary>Что сделает Enter с этим предметом — подсказка внизу описания.</summary>
+    public static string ActionHint(Item item) => item.Kind switch
+    {
+        _ when item.IsEquipment => "Enter — надеть",
+        ItemKind.HealthPotion or ItemKind.StrengthPotion or ItemKind.InvisibilityPotion => "Enter — выпить",
+        ItemKind.Bomb => "Enter — взорвать",
+        _ => "Enter — прочитать",
+    };
+
+    private static string Colored(string text, Color color) => $"[color=#{color.ToHtml(false)}]{text}[/color]";
 }

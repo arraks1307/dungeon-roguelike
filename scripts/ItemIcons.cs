@@ -12,21 +12,27 @@ public static class ItemIcons
 {
     private const int Size = 24;
 
-    private static readonly Dictionary<(ItemKind, Color), Texture2D> Cache = new();
+    private static readonly Dictionary<(ItemKind, Color, int), Texture2D> Cache = new();
     private static readonly Color Parchment = new(0.92f, 0.86f, 0.7f);
     private static readonly Color Clear = new(0f, 0f, 0f, 0f);
 
-    public static Texture2D Get(Item item) => Get(item.Kind, item.Color);
+    public static Texture2D Get(Item item, int size = Size) => Get(item.Kind, item.Color, size);
 
-    public static Texture2D Get(ItemKind kind, Color color)
+    /// <summary>
+    /// Иконка нужного размера. Рисуем всегда 24×24, а затем увеличиваем методом «ближайшего соседа»
+    /// (Nearest): каждый пиксель становится квадратом 2×2, 3×3 и т. д. — края остаются чёткими, без размытия.
+    /// </summary>
+    public static Texture2D Get(ItemKind kind, Color color, int size = Size)
     {
-        if (Cache.TryGetValue((kind, color), out var cached))
+        if (Cache.TryGetValue((kind, color, size), out var cached))
             return cached;
 
         var image = Image.CreateEmpty(Size, Size, false, Image.Format.Rgba8);
         Draw(image, kind, color);
+        if (size != Size)
+            image.Resize(size, size, Image.Interpolation.Nearest);
         var texture = ImageTexture.CreateFromImage(image);
-        Cache[(kind, color)] = texture;
+        Cache[(kind, color, size)] = texture;
         return texture;
     }
 
@@ -56,13 +62,13 @@ public static class ItemIcons
             case ItemKind.Ring:
                 Circle(image, 12, 14, 7, color);
                 Circle(image, 12, 14, 4, Clear);       // дырка кольца
-                Circle(image, 12, 6, 3, Colors.White); // камень
+                Circle(image, 12, 6, 3, new Color(1f, 1f, 1f, color.A)); // камень (прозрачность — как у иконки)
                 break;
             case ItemKind.Amulet:
                 Line(image, 4, 2, 12, 11, dark, 1);    // цепочка
                 Line(image, 20, 2, 12, 11, dark, 1);
                 Circle(image, 12, 15, 6, color);
-                Circle(image, 12, 15, 2, Colors.White);
+                Circle(image, 12, 15, 2, new Color(1f, 1f, 1f, color.A));
                 break;
             case ItemKind.HealthPotion:
             case ItemKind.StrengthPotion:

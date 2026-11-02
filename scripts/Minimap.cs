@@ -11,7 +11,6 @@ public partial class Minimap : Control
 {
     private const int CellSize = 4;
 
-    private static readonly Color BackgroundColor = new(0f, 0f, 0f, 0.55f);
     private static readonly Color SeenFloorColor = new(0.35f, 0.35f, 0.4f);
     private static readonly Color VisibleFloorColor = new(0.7f, 0.65f, 0.6f);
     private static readonly Color StairsColor = new(1f, 0.8f, 0.25f);
@@ -46,7 +45,7 @@ public partial class Minimap : Control
         if (_map == null)
             return;
 
-        DrawRect(new Rect2(Vector2.Zero, CustomMinimumSize), BackgroundColor);
+        // Подложку рисует «стеклянная» карточка HUD, здесь — только сама карта
 
         for (int x = 0; x < _map.Width; x++)
         {

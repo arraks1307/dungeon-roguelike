@@ -15,7 +15,7 @@ public partial class ShopPanel : CanvasLayer
 
     private Label _goldLabel;
     private Label _status;
-    private Label _details;
+    private RichTextLabel _details;
     private VBoxContainer _buyList;
     private VBoxContainer _sellList;
 
@@ -25,41 +25,55 @@ public partial class ShopPanel : CanvasLayer
         Visible = false;
         var column = Ui.CreateCenteredScreen(this, 0.6f);
 
-        var title = Ui.CreateLabel(34, "Торговец");
-        title.AddThemeColorOverride("font_color", Ui.TitleColor);
-        column.AddChild(title);
+        column.AddThemeConstantOverride("separation", 18);
 
-        _goldLabel = Ui.CreateLabel(20);
-        column.AddChild(_goldLabel);
+        var header = new HBoxContainer();
+        column.AddChild(header);
+        header.AddChild(Ui.CreateTitle("Торговец"));
+        header.AddChild(new Control { SizeFlagsHorizontal = Control.SizeFlags.ExpandFill });
+        _goldLabel = Ui.CreateMutedLabel(18);
+        _goldLabel.SizeFlagsVertical = Control.SizeFlags.ShrinkBegin;
+        header.AddChild(_goldLabel);
 
         var columns = new HBoxContainer();
-        columns.AddThemeConstantOverride("separation", 32);
+        columns.AddThemeConstantOverride("separation", 24);
         column.AddChild(columns);
 
-        _buyList = CreateColumn(columns, "Купить");
-        _sellList = CreateColumn(columns, "Продать");
+        _buyList = CreateColumn(columns, "КУПИТЬ");
+        _sellList = CreateColumn(columns, "ПРОДАТЬ");
 
-        _details = Ui.CreateWrappedLabel(16, 780f);
-        _details.CustomMinimumSize = new Vector2(780f, 70f);
-        column.AddChild(_details);
+        var detailsCard = new PanelContainer { CustomMinimumSize = new Vector2(300f, 0f) };
+        detailsCard.AddThemeStyleboxOverride("panel", UiTheme.Slot(new Color(1f, 1f, 1f, 0.08f), 0.04f));
+        columns.AddChild(detailsCard);
+        _details = Ui.CreateRichText(280f);
+        detailsCard.AddChild(_details);
 
         _status = Ui.CreateLabel(17);
         column.AddChild(_status);
 
-        var hint = Ui.CreateLabel(15, "Enter / клик — купить или продать  •  стрелки — выбор  •  Esc — уйти");
-        hint.Modulate = new Color(1f, 1f, 1f, 0.6f);
-        column.AddChild(hint);
+        column.AddChild(Ui.CreateMutedLabel(14, "Enter / клик — купить или продать  •  стрелки — выбор  •  Esc — уйти"));
     }
 
+    /// <summary>
+    /// Колонка с прокруткой: товаров и вещей может быть больше, чем помещается на экран.
+    /// FollowFocus — при выборе стрелками ScrollContainer сам прокручивает к выбранной кнопке.
+    /// </summary>
     private static VBoxContainer CreateColumn(Node parent, string header)
     {
         var box = new VBoxContainer();
-        box.AddThemeConstantOverride("separation", 4);
+        box.AddThemeConstantOverride("separation", 8);
         parent.AddChild(box);
-        box.AddChild(Ui.CreateLabel(20, header));
-        var list = new VBoxContainer();
-        list.AddThemeConstantOverride("separation", 4);
-        box.AddChild(list);
+        box.AddChild(Ui.CreateMutedLabel(15, header));
+        var scroll = new ScrollContainer
+        {
+            CustomMinimumSize = new Vector2(350f, 390f),
+            HorizontalScrollMode = ScrollContainer.ScrollMode.Disabled,
+            FollowFocus = true,
+        };
+        box.AddChild(scroll);
+        var list = new VBoxContainer { SizeFlagsHorizontal = Control.SizeFlags.ExpandFill };
+        list.AddThemeConstantOverride("separation", 6);
+        scroll.AddChild(list);
         return list;
     }
 
@@ -81,15 +95,16 @@ public partial class ShopPanel : CanvasLayer
         _goldLabel.Text = $"Твоё золото: {player.Gold}";
         _details.Text = "";
 
-        var buyButtons = Fill(_buyList, stock, item => $"{item.Name} — {item.Price} зол.",
+        // Название и цена в две строки — так длинные названия вроде «Кольцо меткости остроты» помещаются
+        var buyButtons = Fill(_buyList, stock, item => $"{item.Name}\n{item.Price} зол.",
             index => BuyRequested?.Invoke(index), player);
-        var sellButtons = Fill(_sellList, player.Inventory.Items, item => $"{item.DisplayName} — {item.SellPrice} зол.",
+        var sellButtons = Fill(_sellList, player.Inventory.Items, item => $"{item.DisplayName}\n+{item.SellPrice} зол.",
             index => SellRequested?.Invoke(index), player);
 
         if (buyButtons.Count == 0)
-            _buyList.AddChild(Ui.CreateLabel(17, "Всё распродано"));
+            _buyList.AddChild(Ui.CreateMutedLabel(17, "Всё распродано"));
         if (sellButtons.Count == 0)
-            _sellList.AddChild(Ui.CreateLabel(17, "Нечего продать"));
+            _sellList.AddChild(Ui.CreateMutedLabel(17, "Нечего продать"));
 
         // Фокус остаётся в той же колонке, что и был; если она пуста — переходим в другую
         var preferred = focusBuy ? buyButtons : sellButtons;
@@ -114,6 +129,8 @@ public partial class ShopPanel : CanvasLayer
             int index = i;
             var button = Ui.CreateItemButton(item, text(item), () => onPressed(index),
                 () => _details.Text = ItemInfo.Describe(item, player.Inventory));
+            button.CustomMinimumSize = new Vector2(330f, 62f);
+            button.AddThemeFontSizeOverride("font_size", 16);
             list.AddChild(button);
             buttons.Add(button);
         }
