@@ -242,7 +242,10 @@ public partial class GameManager : Node3D, IGameWorld
         switch (key.PhysicalKeycode)
         {
             case Key.Escape when _state == GameState.Menu && _classSelect.Visible:
-                CloseClassSelect();
+                if (_classSelect.IsConfirming)
+                    _classSelect.CancelConfirm(); // с подтверждения — обратно к карточкам
+                else
+                    CloseClassSelect();
                 break;
             case Key.F when _state == GameState.Playing:
                 UseSkill(0);

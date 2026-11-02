@@ -59,9 +59,13 @@ public static class Ui
     /// Полупрозрачное затемнение на весь экран с колонкой по центру.
     /// Возвращает колонку, в которую добавляются заголовки и кнопки.
     /// </summary>
-    public static VBoxContainer CreateCenteredScreen(Node parent, float dimAlpha)
+    public static VBoxContainer CreateCenteredScreen(Node parent, float dimAlpha) =>
+        CreateCenteredScreen(parent, dimAlpha, out _);
+
+    /// <summary>То же самое, но ещё отдаёт фон — через него весь экран можно прятать и показывать.</summary>
+    public static VBoxContainer CreateCenteredScreen(Node parent, float dimAlpha, out ColorRect background)
     {
-        var background = new ColorRect { Color = new Color(0f, 0f, 0f, dimAlpha) };
+        background = new ColorRect { Color = new Color(0f, 0f, 0f, dimAlpha) };
         background.SetAnchorsPreset(Control.LayoutPreset.FullRect);
         parent.AddChild(background);
 

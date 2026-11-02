@@ -90,7 +90,7 @@ public partial class GameManager
     private void RunSelfTest()
     {
         _frame++;
-        bool inMenu = _screenshotView is "menu" or "scores";
+        bool inMenu = _screenshotView is "menu" or "scores" or "classes" or "classconfirm";
 
         if (_frame == 1)
         {
@@ -98,6 +98,11 @@ public partial class GameManager
                 _mainMenu.ShowScores();
             else if (_screenshotView == "classes")
                 OpenClassSelect();
+            else if (_screenshotView == "classconfirm")
+            {
+                OpenClassSelect();
+                _classSelect.AskConfirm(_testClass ?? ClassCatalog.Mage);
+            }
             else if (!inMenu)
                 StartNewGame(_testClass ?? ClassCatalog.All[_rng.Next(ClassCatalog.All.Length)],
                     _testDifficulty ?? Difficulties.Normal);
