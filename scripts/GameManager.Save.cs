@@ -23,7 +23,7 @@ public partial class GameManager
 
     private void SaveRun()
     {
-        if (!IsRunInProgress || _player.IsDead)
+        if (!IsRunInProgress || _player.IsDead || _simulateGames > 0)
             return;
         SaveSystem.Save(CreateSaveData());
     }
@@ -35,6 +35,8 @@ public partial class GameManager
             Floor = _floor,
             Kills = _kills,
             PendingLevelUps = _pendingLevelUps,
+            Turns = _turns,
+            Difficulty = _difficulty.Id,
             Player = _player.CreateSave(),
             Map = MapSave.From(_map),
             Enemies = _enemies.Where(enemy => !enemy.IsDead).Select(enemy => enemy.CreateSave()).ToList(),
@@ -86,6 +88,9 @@ public partial class GameManager
             _floor = data.Floor;
             _kills = data.Kills;
             _pendingLevelUps = data.PendingLevelUps;
+            _turns = data.Turns;
+            _victory = false;
+            _difficulty = Difficulties.Get(data.Difficulty);
             _levelUpPanel.Visible = false;
             _map = data.Map.ToMap();
             _renderer.Build(_map);

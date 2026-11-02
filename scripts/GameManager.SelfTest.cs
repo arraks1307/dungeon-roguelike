@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using System.Linq;
 using Godot;
 
@@ -17,6 +18,19 @@ public partial class GameManager
     private int _startFloor = 1;
     private bool _godMode; // игрок не может погибнуть
     private ClassDef _testClass; // null — случайный класс
+    private DifficultyDef _testDifficulty; // null — по очереди или обычная
+
+    // Симуляция: N забегов подряд без графики, в конце — сводка для настройки баланса
+    private const int SimTurnLimit = 5000;
+    private const int SimActionsPerFrame = 200;
+    private int _simulateGames;
+    private int _simGame;
+    private int _simActions;
+    private readonly List<SimResult> _simResults = new();
+
+    private record SimResult(string Class, string Difficulty, int Floor, int Level, bool Victory, bool Timeout, int Turns);
+
+    private bool IsTestRun => _screenshotPath != null || _simulateGames > 0;
 
     private void ParseCommandLine()
     {
@@ -40,10 +54,20 @@ public partial class GameManager
                     "mage" => ClassCatalog.Mage,
                     _ => null,
                 };
+            else if (arg.StartsWith("--difficulty="))
+                _testDifficulty = arg["--difficulty=".Length..] switch
+                {
+                    "easy" => Difficulties.Easy,
+                    "normal" => Difficulties.Normal,
+                    "hard" => Difficulties.Hard,
+                    _ => null,
+                };
+            else if (arg.StartsWith("--simulate="))
+                _simulateGames = int.Parse(arg["--simulate=".Length..]);
         }
 
         // Самопроверка не должна трогать настоящее сохранение игрока
-        if (_screenshotPath != null)
+        if (IsTestRun)
         {
             SaveSystem.FilePath = "user://selftest_save.json";
             SaveSystem.Delete();
@@ -75,7 +99,8 @@ public partial class GameManager
             else if (_screenshotView == "classes")
                 OpenClassSelect();
             else if (!inMenu)
-                StartNewGame(_testClass ?? ClassCatalog.All[_rng.Next(ClassCatalog.All.Length)]);
+                StartNewGame(_testClass ?? ClassCatalog.All[_rng.Next(ClassCatalog.All.Length)],
+                    _testDifficulty ?? Difficulties.Normal);
         }
 
         int moveFrames = inMenu ? 0 : _autoMoves * 3;
@@ -182,6 +207,12 @@ public partial class GameManager
             return;
         }
 
+        // Враг вплотную — бьём самого раненого, а не убегаем к лестнице
+        var adjacent = _enemies
+            .Where(enemy => _map.AreAdjacent(_player.GridPos, enemy.GridPos))
+            .OrderBy(enemy => enemy.Hp)
+            .FirstOrDefault();
+
         bool enemyNear = _enemies.Any(enemy => _visible.Contains(enemy.GridPos) && ChebyshevDistance(enemy.GridPos, _player.GridPos) <= 3);
         for (int i = 0; i < 2; i++)
         {
@@ -200,7 +231,70 @@ public partial class GameManager
             return;
         }
 
-        OnPlayerAction(AutoPilotDirection());
+        OnPlayerAction(adjacent != null ? adjacent.GridPos - _player.GridPos : AutoPilotDirection());
+    }
+
+    // ---------- Симуляция для настройки баланса ----------
+
+    /// <summary>Отключаем всё, что нужно только глазам и ушам, — так забеги идут в десятки раз быстрее.</summary>
+    private void SetupSimulation()
+    {
+        Effects.Enabled = false;
+        _sound.Muted = true;
+        _hud.Silent = true;
+        Settings.Current.Animation = AnimationSpeed.Instant; // только в памяти, файл настроек не трогаем
+        Settings.Current.CameraShake = false;
+    }
+
+    private void StartSimulatedGame()
+    {
+        // Классы и сложности по очереди, чтобы выборка была ровной
+        var playerClass = _testClass ?? ClassCatalog.All[_simGame % ClassCatalog.All.Length];
+        var difficulty = _testDifficulty ?? Difficulties.Normal;
+        _simActions = 0;
+        StartNewGame(playerClass, difficulty);
+    }
+
+    private void RunSimulation()
+    {
+        if (_simGame == 0 && _state == GameState.Menu)
+        {
+            SetupSimulation();
+            StartSimulatedGame();
+        }
+
+        for (int i = 0; i < SimActionsPerFrame; i++)
+        {
+            bool timeout = _turns >= SimTurnLimit || _simActions >= SimTurnLimit * 5;
+            if (_state == GameState.GameOver || timeout)
+            {
+                _simResults.Add(new SimResult(_player.Class.Name, _difficulty.Name, _floor, _player.Level, _victory, timeout, _turns));
+                _simGame++;
+                if (_simGame >= _simulateGames)
+                {
+                    PrintSimulationSummary();
+                    GetTree().Quit();
+                    return;
+                }
+                StartSimulatedGame();
+            }
+            _simActions++;
+            AutoPilotTurn();
+        }
+    }
+
+    private void PrintSimulationSummary()
+    {
+        GD.Print("СИМУЛЯЦИЯ: класс | сложность | забегов | средний этаж | медиана | дошли до 5 | до 10 | победы | ср. уровень | зависли");
+        foreach (var group in _simResults.GroupBy(r => (r.Class, r.Difficulty)))
+        {
+            var floors = group.Select(r => r.Floor).OrderBy(f => f).ToList();
+            int n = floors.Count;
+            string Percent(int count) => $"{100 * count / n}%";
+            GD.Print($"СИМУЛЯЦИЯ: {group.Key.Class} | {group.Key.Difficulty} | {n} | {floors.Average():F1} | {floors[n / 2]} | " +
+                     $"{Percent(group.Count(r => r.Floor >= 5))} | {Percent(group.Count(r => r.Floor >= 10))} | " +
+                     $"{Percent(group.Count(r => r.Victory))} | {group.Average(r => r.Level):F1} | {group.Count(r => r.Timeout)}");
+        }
     }
 
     /// <summary>Грубая оценка полезности вещи для автопилота (пустой слот — ноль).</summary>
@@ -213,14 +307,23 @@ public partial class GameManager
                s.Thorns + s.Regen * 2 + s.Vision + s.FireDamage * 2;
     }
 
-    /// <summary>Автопилот: чаще идёт к лестнице, иногда шагает случайно.</summary>
+    /// <summary>
+    /// Автопилот ведёт себя как обычный игрок: пока здоровья хватает, идёт драться с видимыми
+    /// врагами (опыт и добыча), иначе — к лестнице. Иногда шагает случайно, чтобы не застревать.
+    /// </summary>
     private Vector2I AutoPilotDirection()
     {
         var randomDirection = DungeonMap.Directions[_rng.Next(DungeonMap.Directions.Length)];
-        if (_rng.NextDouble() < 0.3)
+        if (_rng.NextDouble() < 0.15)
             return randomDirection;
 
-        var distances = _map.DistanceField(_map.StairsPos, MapWidth * MapHeight);
+        var prey = _enemies
+            .Where(enemy => _visible.Contains(enemy.GridPos) && ChebyshevDistance(enemy.GridPos, _player.GridPos) <= 6)
+            .OrderBy(enemy => ChebyshevDistance(enemy.GridPos, _player.GridPos))
+            .FirstOrDefault();
+        var goal = prey != null && _player.Hp > _player.MaxHp * 0.45f ? prey.GridPos : _map.StairsPos;
+
+        var distances = _map.DistanceField(goal, MapWidth * MapHeight);
         if (!distances.TryGetValue(_player.GridPos, out int best))
             return randomDirection;
 

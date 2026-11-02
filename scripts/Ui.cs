@@ -79,5 +79,11 @@ public static class Ui
     /// Фокус на кнопке, чтобы меню работало с клавиатуры (стрелки + Enter).
     /// CallDeferred откладывает вызов до конца кадра, когда кнопка уже видима.
     /// </summary>
-    public static void FocusLater(Button button) => button.CallDeferred(Control.MethodName.GrabFocus);
+    public static void FocusLater(Button button) =>
+        Callable.From(() =>
+        {
+            // За время ожидания окно могло пересоздать кнопки — тогда эта уже удалена из сцены
+            if (GodotObject.IsInstanceValid(button) && button.IsInsideTree() && button.IsVisibleInTree())
+                button.GrabFocus();
+        }).CallDeferred();
 }

@@ -49,12 +49,12 @@ public static class ClassCatalog
     public static readonly ClassDef Ranger = new(
         PlayerClass.Ranger, "Следопыт",
         "Бьёт издалека и видит дальше других.",
-        MaxHp: 28, Attack: 3, new Color(0.35f, 0.8f, 0.4f),
+        MaxHp: 34, Attack: 3, new Color(0.35f, 0.8f, 0.4f),
         new[] { ItemCatalog.Dagger, ItemCatalog.SightAmulet, ItemCatalog.HealthPotion },
         new[]
         {
-            new SkillDef(SkillId.AimedShot, "Меткий выстрел", "стрела в ближайшего врага (атака +3)", 2),
-            new SkillDef(SkillId.ArrowRain, "Град стрел", "стрелы во всех видимых врагов", 10),
+            new SkillDef(SkillId.AimedShot, "Меткий выстрел", "стрела в ближайшего врага (атака +5)", 2),
+            new SkillDef(SkillId.ArrowRain, "Град стрел", "стрелы во всех видимых врагов", 7),
         });
 
     public static readonly ClassDef Mage = new(

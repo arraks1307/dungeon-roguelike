@@ -91,7 +91,7 @@ public partial class GameManager
         Effects.Projectile(this, _player.GridPos, target.GridPos, _player.Class.Color);
         _sound.Play(Sound.Shoot);
         bool crit = _rng.Next(100) < _player.Bonuses.Crit;
-        int damage = RollDamage(_player, target) + 3;
+        int damage = RollDamage(_player, target) + 5;
         if (crit)
             damage *= 2;
         _hud.AddMessage($"Меткий выстрел{(crit ? " — в яблочко!" : "")}: {target.DisplayName} получает {damage}.");

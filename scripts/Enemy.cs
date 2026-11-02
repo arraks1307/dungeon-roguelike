@@ -17,7 +17,9 @@ public enum EnemyBehavior
     Melee,  // идёт к игроку и бьёт вплотную
     Archer, // стреляет издалека и держит дистанцию
     Ghost,  // проходит сквозь стены
-    Boss,   // ближний бой + призыв помощников
+    Boss,   // Король орков: ближний бой + призыв помощников
+    Necromancer, // держит дистанцию, стреляет и поднимает скелетов
+    Overlord,    // финальный босс: всё сразу, на половине здоровья звереет
 }
 
 /// <summary>
@@ -32,7 +34,11 @@ public partial class Enemy : Actor
 {
     private const int ArcherRange = 6;
     private const int GhostSenseRadius = 6;
-    private const int BossSummonInterval = 4;
+    private const int BossSummonInterval = 5;
+
+    // Рост врагов с глубиной: +HpPerFloor здоровья за этаж и +1 атаки каждые AttackFloorStep этажей
+    public const int HpPerFloor = 2;
+    public const int AttackFloorStep = 3;
 
     public static readonly EnemyType[] Types =
     {
@@ -41,20 +47,39 @@ public partial class Enemy : Actor
         new("Лучник", 8, 3, 0, new Color(0.3f, 0.75f, 0.7f), EnemyShape.Cone, EnemyBehavior.Archer, Slow: false, MinFloor: 2),
         new("Призрак", 7, 4, 0, new Color(0.75f, 0.8f, 1f), EnemyShape.Capsule, EnemyBehavior.Ghost, Slow: true, MinFloor: 3),
         new("Орк", 18, 5, 1, new Color(0.85f, 0.25f, 0.2f), EnemyShape.Box, EnemyBehavior.Melee, Slow: false, MinFloor: 3),
+        new("Скелет", 14, 5, 1, new Color(0.88f, 0.86f, 0.78f), EnemyShape.Capsule, EnemyBehavior.Melee, Slow: false, MinFloor: 11),
         // Мимик сам по этажам не бродит (MinFloor 99) — он появляется только из сундука
         new("Мимик", 20, 6, 1, new Color(0.55f, 0.33f, 0.14f), EnemyShape.Box, EnemyBehavior.Melee, Slow: false, MinFloor: 99),
     };
 
     public static EnemyType Mimic => Array.Find(Types, type => type.Name == "Мимик");
+    public static EnemyType Skeleton => Array.Find(Types, type => type.Name == "Скелет");
 
-    public static readonly EnemyType BossType =
-        new("Король орков", 50, 6, 2, new Color(0.55f, 0.1f, 0.12f), EnemyShape.Box, EnemyBehavior.Boss, Slow: false, MinFloor: 5);
+    public static readonly EnemyType[] Bosses =
+    {
+        new("Король орков", 34, 5, 2, new Color(0.55f, 0.1f, 0.12f), EnemyShape.Box, EnemyBehavior.Boss, Slow: false, MinFloor: 5),
+        new("Некромант", 60, 7, 1, new Color(0.35f, 0.15f, 0.45f), EnemyShape.Cone, EnemyBehavior.Necromancer, Slow: false, MinFloor: 10),
+        new("Владыка бездны", 110, 9, 3, new Color(0.25f, 0.05f, 0.08f), EnemyShape.Box, EnemyBehavior.Overlord, Slow: false, MinFloor: 15),
+    };
+
+    /// <summary>Босс этажа: 5 — Король орков, 10 — Некромант, 15 — Владыка бездны.</summary>
+    public static EnemyType BossForFloor(int floor) => Bosses[Math.Clamp(floor / 5 - 1, 0, Bosses.Length - 1)];
 
     public EnemyType Type { get; private set; }
-    public bool IsBoss => Type.Behavior == EnemyBehavior.Boss;
+    public bool IsBoss => Type.Behavior is EnemyBehavior.Boss or EnemyBehavior.Necromancer or EnemyBehavior.Overlord;
+    public bool IsFinalBoss => Type.Behavior == EnemyBehavior.Overlord;
+
+    /// <summary>Вторая фаза финального босса: меньше половины здоровья.</summary>
+    private bool IsEnraged => IsFinalBoss && Hp <= MaxHp / 2;
 
     /// <summary>Заметил ли враг игрока. Пока не заметил — стоит на месте.</summary>
     public bool Alerted { get; set; }
+
+    /// <summary>Призван боссом — за него не дают опыта, иначе на боссе можно было бы «фармить» уровни.</summary>
+    public bool IsSummoned { get; set; }
+
+    /// <summary>Опыт за победу над этим врагом.</summary>
+    public int ExperienceReward => IsBoss ? 6 : IsSummoned ? 0 : 1;
 
     private static readonly Color IceColor = new(0.55f, 0.85f, 1f);
 
@@ -75,7 +100,7 @@ public partial class Enemy : Actor
     }
 
     public static EnemyType FindType(string name) =>
-        name == BossType.Name ? BossType : Array.Find(Types, type => type.Name == name);
+        Array.Find(Types, type => type.Name == name) ?? Array.Find(Bosses, type => type.Name == name);
 
     public EnemySave CreateSave() => new()
     {
@@ -86,6 +111,7 @@ public partial class Enemy : Actor
         Frozen = FrozenTurns,
         Alerted = Alerted,
         Boss = IsBoss,
+        Summoned = IsSummoned,
     };
 
     /// <summary>Вернуть состояние из сохранения (вызывается после Setup).</summary>
@@ -93,38 +119,25 @@ public partial class Enemy : Actor
     {
         SetHp(Math.Max(save.Hp, 1));
         Alerted = save.Alerted;
+        IsSummoned = save.Summoned;
         if (save.Frozen > 0)
             Freeze(save.Frozen);
     }
 
-    public void Setup(EnemyType type, int floor)
+    public void Setup(EnemyType type, int floor, DifficultyDef difficulty)
     {
         Type = type;
         DisplayName = type.Name;
-        // С каждым этажом враги немного крепче
-        MaxHp = type.Hp + (floor - 1) * 2;
+        // С каждым этажом враги немного крепче, а сложность умножает здоровье и урон
+        MaxHp = Mathf.RoundToInt((type.Hp + (floor - 1) * HpPerFloor) * difficulty.EnemyHp);
         Hp = MaxHp;
-        Attack = type.Attack + (floor - 1) / 2;
+        Attack = Math.Max(1, Mathf.RoundToInt((type.Attack + (floor - 1) / AttackFloorStep) * difficulty.EnemyDamage));
         Defense = type.Defense;
 
         if (IsBoss)
         {
-            CreateBody(new BoxMesh { Size = new Vector3(0.9f, 1.3f, 0.9f) }, type.Color, 0.65f);
-            // Корона: золотое кольцо на голове
-            Body.AddChild(new MeshInstance3D
-            {
-                Mesh = new CylinderMesh
-                {
-                    TopRadius = 0.35f, BottomRadius = 0.3f, Height = 0.2f,
-                    Material = new StandardMaterial3D
-                    {
-                        AlbedoColor = Ui.TitleColor, EmissionEnabled = true, Emission = Ui.TitleColor,
-                        EmissionEnergyMultiplier = 0.6f,
-                    },
-                },
-                Position = new Vector3(0f, 0.75f, 0f),
-            });
-            CreateHealthBar(1.75f);
+            CreateBossBody(type);
+            CreateHealthBar(type.Behavior == EnemyBehavior.Overlord ? 2.1f : 1.75f);
             return;
         }
 
@@ -148,6 +161,52 @@ public partial class Enemy : Actor
 
         if (type.Behavior == EnemyBehavior.Ghost)
             MakeTranslucent(0.45f);
+    }
+
+    /// <summary>У каждого босса свой силуэт, чтобы его сразу можно было узнать.</summary>
+    private void CreateBossBody(EnemyType type)
+    {
+        var gold = Ui.TitleColor;
+        switch (type.Behavior)
+        {
+            case EnemyBehavior.Necromancer:
+                // Высокая мантия, череп и светящийся посох
+                CreateBody(new CylinderMesh { TopRadius = 0.12f, BottomRadius = 0.4f, Height = 1.3f }, type.Color, 0.65f);
+                Body.AddChild(Glowing(new SphereMesh { Radius = 0.17f, Height = 0.34f }, new Color(0.9f, 0.88f, 0.8f), 0.2f, new Vector3(0f, 0.78f, 0f)));
+                Body.AddChild(Glowing(new BoxMesh { Size = new Vector3(0.05f, 1.4f, 0.05f) }, new Color(0.3f, 0.2f, 0.1f), 0f, new Vector3(0.42f, 0.1f, 0f)));
+                Body.AddChild(Glowing(new SphereMesh { Radius = 0.1f, Height = 0.2f }, new Color(0.6f, 1f, 0.5f), 2.5f, new Vector3(0.42f, 0.85f, 0f)));
+                break;
+
+            case EnemyBehavior.Overlord:
+                // Огромная тёмная глыба с рогами и раскалёнными глазами
+                CreateBody(new BoxMesh { Size = new Vector3(1.1f, 1.6f, 1f) }, type.Color, 0.8f);
+                var red = new Color(1f, 0.15f, 0.05f);
+                Body.AddChild(Glowing(new CylinderMesh { TopRadius = 0f, BottomRadius = 0.12f, Height = 0.45f }, new Color(0.15f, 0.12f, 0.1f), 0f, new Vector3(-0.35f, 1f, 0f)));
+                Body.AddChild(Glowing(new CylinderMesh { TopRadius = 0f, BottomRadius = 0.12f, Height = 0.45f }, new Color(0.15f, 0.12f, 0.1f), 0f, new Vector3(0.35f, 1f, 0f)));
+                Body.AddChild(Glowing(new SphereMesh { Radius = 0.08f, Height = 0.16f }, red, 4f, new Vector3(-0.22f, 0.45f, 0.5f)));
+                Body.AddChild(Glowing(new SphereMesh { Radius = 0.08f, Height = 0.16f }, red, 4f, new Vector3(0.22f, 0.45f, 0.5f)));
+                AddChild(new OmniLight3D { LightColor = red, LightEnergy = 1.5f, OmniRange = 4f, Position = new Vector3(0f, 1.2f, 0f) });
+                break;
+
+            default:
+                // Король орков: здоровяк в золотой короне
+                CreateBody(new BoxMesh { Size = new Vector3(0.9f, 1.3f, 0.9f) }, type.Color, 0.65f);
+                Body.AddChild(Glowing(new CylinderMesh { TopRadius = 0.35f, BottomRadius = 0.3f, Height = 0.2f }, gold, 0.6f, new Vector3(0f, 0.75f, 0f)));
+                break;
+        }
+    }
+
+    private static MeshInstance3D Glowing(PrimitiveMesh mesh, Color color, float glow, Vector3 position)
+    {
+        var material = new StandardMaterial3D { AlbedoColor = color };
+        if (glow > 0f)
+        {
+            material.EmissionEnabled = true;
+            material.Emission = color;
+            material.EmissionEnergyMultiplier = glow;
+        }
+        mesh.Material = material;
+        return new MeshInstance3D { Mesh = mesh, Position = position };
     }
 
     /// <summary>Медленные враги действуют через ход.</summary>
@@ -198,12 +257,50 @@ public partial class Enemy : Actor
                 GhostTurn(world, stepsToPlayer);
                 break;
             case EnemyBehavior.Boss when _turnsTaken % BossSummonInterval == 0:
-                world.SummonMinions(this, 2);
+                world.SummonMinions(this, 2, null);
+                break;
+            case EnemyBehavior.Necromancer when _turnsTaken % BossSummonInterval == 0:
+                world.SummonMinions(this, 2, Skeleton);
+                break;
+            case EnemyBehavior.Necromancer:
+                ArcherTurn(world, stepsToPlayer); // в остальное время ведёт себя как лучник
+                break;
+            case EnemyBehavior.Overlord:
+                OverlordTurn(world, stepsToPlayer);
                 break;
             default:
                 MeleeTurn(world);
                 break;
         }
+    }
+
+    private bool _enraged;
+
+    /// <summary>
+    /// Финальный босс. Первая фаза: ближний бой, огненные залпы через ход, призыв раз в 6 ходов.
+    /// Вторая фаза (меньше половины здоровья): +3 к атаке и призыв раз в 3 хода.
+    /// </summary>
+    private void OverlordTurn(IGameWorld world, int stepsToPlayer)
+    {
+        if (IsEnraged && !_enraged)
+        {
+            _enraged = true;
+            Attack += 3;
+            world.Announce($"{DisplayName} впадает в ярость!");
+        }
+
+        int summonInterval = _enraged ? 3 : 6;
+        if (_turnsTaken % summonInterval == 0)
+        {
+            world.SummonMinions(this, 2, _turnsTaken % 2 == 0 ? Skeleton : Array.Find(Types, t => t.Name == "Орк"));
+            return;
+        }
+        if (stepsToPlayer is >= 2 and <= 5 && world.IsVisibleToPlayer(GridPos) && _turnsTaken % 2 == 0)
+        {
+            world.EnemyAttacksPlayer(this, ranged: true);
+            return;
+        }
+        MeleeTurn(world);
     }
 
     private void MeleeTurn(IGameWorld world)

@@ -20,6 +20,13 @@ public partial class Player : Actor
 
     public ClassDef Class { get; private set; } = ClassCatalog.Warrior;
     public int Level { get; private set; }
+    public int Experience { get; private set; }
+
+    /// <summary>
+    /// Сколько опыта нужно до следующего уровня. Растёт с уровнем, чтобы к концу игры герой
+    /// не превращался в неуязвимую машину (это показали симуляции).
+    /// </summary>
+    public int ExperienceToNextLevel => 1 + Level;
     public int Gold { get; set; }
     public Inventory Inventory { get; } = new();
 
@@ -66,6 +73,7 @@ public partial class Player : Actor
     {
         SetClass(playerClass);
         Level = 1;
+        Experience = 0;
         Gold = 0;
         _baseAttack = playerClass.Attack;
         _baseMaxHp = playerClass.MaxHp;
@@ -96,8 +104,22 @@ public partial class Player : Actor
         BaseColor = playerClass.Color;
     }
 
+    /// <summary>Добавить опыт. Возвращает, сколько уровней получено (за один раз может быть больше одного).</summary>
+    public int GainExperience(int amount)
+    {
+        Experience += amount;
+        int levels = 0;
+        while (Experience >= ExperienceToNextLevel)
+        {
+            Experience -= ExperienceToNextLevel;
+            LevelUp();
+            levels++;
+        }
+        return levels;
+    }
+
     /// <summary>Повышение уровня: небольшой рост характеристик. Главное — улучшение на выбор, его применяет ApplyPerk.</summary>
-    public void LevelUp()
+    private void LevelUp()
     {
         Level++;
         _baseMaxHp += 4;
@@ -182,6 +204,7 @@ public partial class Player : Actor
         Y = GridPos.Y,
         Class = Class.Class,
         Level = Level,
+        Experience = Experience,
         Hp = Hp,
         Gold = Gold,
         BaseAttack = _baseAttack,
@@ -200,6 +223,7 @@ public partial class Player : Actor
     {
         SetClass(ClassCatalog.Get(save.Class));
         Level = save.Level;
+        Experience = save.Experience;
         Gold = save.Gold;
         _baseAttack = save.BaseAttack;
         _baseMaxHp = save.BaseMaxHp;

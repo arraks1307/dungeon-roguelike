@@ -85,9 +85,12 @@ public partial class SoundManager : Node
         Add(Sound.Death, 0.9f, -4f, t => Square(Chirp(300f, 40f, 0.9f, t)) * 0.45f * Decay(t, 2.5f));
     }
 
+    /// <summary>true — звуки не играются (быстрая симуляция).</summary>
+    public bool Muted { get; set; }
+
     public void Play(Sound sound)
     {
-        if (!_sounds.TryGetValue(sound, out var stream))
+        if (Muted || !_sounds.TryGetValue(sound, out var stream))
             return;
 
         // Берём свободный плеер, а если все заняты — по кругу перебиваем самый старый

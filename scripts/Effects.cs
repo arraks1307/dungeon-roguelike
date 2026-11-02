@@ -7,6 +7,9 @@ namespace Roguelike;
 /// </summary>
 public static class Effects
 {
+    /// <summary>false — эффекты не создаются вовсе (быстрая симуляция без графики).</summary>
+    public static bool Enabled { get; set; } = true;
+
     private static readonly Vector3 ChestHeight = new(0f, 0.5f, 0f);
     private static readonly Vector3 HeadHeight = new(0f, 1.2f, 0f);
 
@@ -16,7 +19,7 @@ public static class Effects
     /// </summary>
     public static void FloatingText(Node3D parent, Vector2I cell, string text, Color color)
     {
-        if (!Settings.Current.DamageNumbers)
+        if (!Enabled || !Settings.Current.DamageNumbers)
             return;
         var label = new Label3D
         {
@@ -44,6 +47,8 @@ public static class Effects
     /// <summary>Разлёт кубиков-осколков из клетки (удар, смерть, магия).</summary>
     public static void Burst(Node3D parent, Vector2I cell, Color color, int amount)
     {
+        if (!Enabled)
+            return;
         var particles = new CpuParticles3D
         {
             OneShot = true,
@@ -75,7 +80,7 @@ public static class Effects
     /// <summary>Стрела летит из одной клетки в другую.</summary>
     public static void Projectile(Node3D parent, Vector2I from, Vector2I to, Color color)
     {
-        if (Settings.AnimationScale == 0f)
+        if (!Enabled || Settings.AnimationScale == 0f)
             return;
         var start = Actor.GridToWorld(from) + ChestHeight;
         var end = Actor.GridToWorld(to) + ChestHeight;

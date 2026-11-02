@@ -18,6 +18,8 @@ public class SaveData
     public int Floor;
     public int Kills;
     public int PendingLevelUps;
+    public int Turns;
+    public Difficulty Difficulty = Difficulty.Normal;
     public PlayerSave Player;
     public MapSave Map;
     public List<EnemySave> Enemies = new();
@@ -74,7 +76,7 @@ public class PlayerSave
     public PlayerClass Class;
     public int[] Cooldowns = Array.Empty<int>();
     public List<string> Perks = new();
-    public int Level, Hp, Gold;
+    public int Level, Experience, Hp, Gold;
     public int BaseAttack, BaseMaxHp;
     public int StrengthTurns, StrengthBonus, InvisibleTurns, TurnCounter;
     public List<ItemSave> Items = new();
@@ -147,7 +149,7 @@ public class EnemySave
 {
     public string Type;
     public int X, Y, Hp, Frozen;
-    public bool Alerted, Boss;
+    public bool Alerted, Boss, Summoned;
 }
 
 public class PickupSave

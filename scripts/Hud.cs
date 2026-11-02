@@ -152,7 +152,7 @@ public partial class Hud : CanvasLayer
         _hpLabel.Text = $"Здоровье: {player.Hp} / {player.MaxHp}";
         _hpBar.MaxValue = player.MaxHp;
         _hpBar.Value = player.Hp;
-        _infoLabel.Text = $"Этаж: {floor}   Уровень: {player.Level}   Атака: {player.Attack}   " +
+        _infoLabel.Text = $"Этаж: {floor}   Уровень: {player.Level} ({player.Experience}/{player.ExperienceToNextLevel})   Атака: {player.Attack}   " +
                           $"Защита: {player.Defense}   Побеждено: {kills}";
         _gearLabel.Text = $"Золото: {player.Gold}   Сумка: {player.Inventory.Items.Count}/{Inventory.Capacity}   " +
                           $"Оружие: {player.Inventory.GetEquipped(EquipSlot.Weapon)?.Name ?? "нет"}";
@@ -238,8 +238,13 @@ public partial class Hud : CanvasLayer
 
     public void ToggleMinimap() => _minimap.Visible = !_minimap.Visible;
 
+    /// <summary>true — журнал не пополняется (быстрая симуляция).</summary>
+    public bool Silent { get; set; }
+
     public void AddMessage(string text, Color? color = null)
     {
+        if (Silent)
+            return;
         var label = Ui.CreateLabel(16, text);
         if (color.HasValue)
             label.AddThemeColorOverride("font_color", color.Value);

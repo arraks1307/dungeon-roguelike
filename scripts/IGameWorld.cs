@@ -22,5 +22,10 @@ public interface IGameWorld
 
     void EnemyAttacksPlayer(Enemy enemy, bool ranged);
     void OpenDoor(Vector2I cell);
-    void SummonMinions(Enemy summoner, int count);
+
+    /// <summary>Призвать помощников рядом с собой. type = null — случайные слабые враги.</summary>
+    void SummonMinions(Enemy summoner, int count, EnemyType type);
+
+    /// <summary>Важное сообщение в журнал (например, ярость босса).</summary>
+    void Announce(string text);
 }

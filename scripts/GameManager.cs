@@ -32,7 +32,6 @@ public partial class GameManager : Node3D, IGameWorld
     private const int MapHeight = 32;
     private const int FovRadius = 8;
     private const int ChaseDistance = 20;
-    private const int KillsPerLevel = 4;
 
     private static readonly Color DamageColor = new(1f, 0.45f, 0.4f);
     private static readonly Color GoodColor = new(0.5f, 1f, 0.5f);
@@ -57,8 +56,11 @@ public partial class GameManager : Node3D, IGameWorld
     private SettingsMenu _settingsMenu;
     private SoundManager _sound;
     private GameState _state;
+    private DifficultyDef _difficulty = Difficulties.Normal;
     private int _floor;
     private int _kills;
+    private int _turns;
+    private bool _victory;
 
     // ---------- Реализация IGameWorld (то, что видят враги) ----------
 
@@ -112,17 +114,25 @@ public partial class GameManager : Node3D, IGameWorld
         }
     }
 
-    public void SummonMinions(Enemy summoner, int count)
+    public void Announce(string text)
     {
-        var minionTypes = Enemy.Types.Where(type => type.MinFloor == 1).ToArray();
+        _hud.AddMessage(text, DamageColor);
+        _camera.Shake(0.3f);
+        _sound.Play(Sound.Summon);
+    }
+
+    public void SummonMinions(Enemy summoner, int count, EnemyType type)
+    {
+        var minionTypes = Enemy.Types.Where(t => t.MinFloor == 1).ToArray();
         int summoned = 0;
         foreach (var direction in DungeonMap.Directions)
         {
             var cell = summoner.GridPos + direction;
             if (summoned == count || !_map.CanMove(summoner.GridPos, cell) || IsOccupied(cell))
                 continue;
-            var minion = SpawnEnemy(minionTypes[_rng.Next(minionTypes.Length)], cell);
+            var minion = SpawnEnemy(type ?? minionTypes[_rng.Next(minionTypes.Length)], cell);
             minion.Alerted = true;
+            minion.IsSummoned = true;
             Effects.Burst(this, cell, new Color(0.6f, 0.2f, 0.8f), 14);
             summoned++;
         }
@@ -196,7 +206,9 @@ public partial class GameManager : Node3D, IGameWorld
 
     public override void _Process(double delta)
     {
-        if (_screenshotPath != null)
+        if (_simulateGames > 0)
+            RunSimulation();
+        else if (_screenshotPath != null)
             RunSelfTest();
     }
 
@@ -262,7 +274,7 @@ public partial class GameManager : Node3D, IGameWorld
                 QuickUse((int)(key.PhysicalKeycode - Key.Key1));
                 break;
             case Key.R when _state == GameState.GameOver:
-                StartNewGame(_player.Class); // заново тем же классом
+                StartNewGame(_player.Class, _difficulty); // заново тем же классом и на той же сложности
                 break;
             case Key.M when _state == GameState.Playing:
                 _hud.ToggleMinimap();
@@ -325,11 +337,14 @@ public partial class GameManager : Node3D, IGameWorld
         _mainMenu.ShowMain();
     }
 
-    private void StartNewGame(ClassDef playerClass)
+    private void StartNewGame(ClassDef playerClass, DifficultyDef difficulty)
     {
         _state = GameState.Playing;
+        _difficulty = difficulty;
         _floor = _startFloor - 1;
         _kills = 0;
+        _turns = 0;
+        _victory = false;
         _pendingLevelUps = 0;
         _mainMenu.Visible = false;
         _classSelect.Visible = false;
@@ -338,6 +353,8 @@ public partial class GameManager : Node3D, IGameWorld
         _hud.ClearMessages();
         _player.Visible = true;
         _player.ResetStats(playerClass);
+        for (int i = 0; i < difficulty.BonusPotions; i++)
+            _player.Inventory.TryAdd(new Item(ItemCatalog.HealthPotion));
         _camera.MenuMode = false;
 
         NextFloor();
@@ -386,23 +403,46 @@ public partial class GameManager : Node3D, IGameWorld
         _sound.Play(Sound.Death);
         _camera.Shake(0.4f);
 
-        // В режиме самопроверки не засоряем таблицу рекордов
-        int place = _screenshotPath == null
-            ? HighScores.Add(new ScoreEntry(_floor, _kills, _player.Level, DateTime.Now.ToString("dd.MM.yyyy HH:mm"), _player.Class.Name))
-            : 0;
-        string placeText = place switch
+        _hud.ShowGameOver(
+            $"Ты погиб на этаже {_floor}\n" +
+            $"Тебя одолел: {killerName}\n" +
+            $"Побеждено врагов: {_kills}   Золото: {_player.Gold}\n" +
+            RecordScore() + "\n" +
+            "R — начать заново  •  Esc — в главное меню");
+    }
+
+    /// <summary>Финальный босс повержен — забег пройден.</summary>
+    private void Victory()
+    {
+        _state = GameState.GameOver;
+        _victory = true;
+        SaveSystem.Delete();
+        UpdateHud();
+        _sound.Play(Sound.LevelUp);
+        _camera.Shake(0.5f);
+
+        _hud.ShowGameOver(
+            "ПОБЕДА!\n\n" +
+            "Владыка бездны повержен, и подземелье затихает.\n" +
+            $"{_player.Class.Name} {_player.Level}-го уровня, сложность: {_difficulty.Name.ToLower()}\n" +
+            $"Побеждено врагов: {_kills}   Золото: {_player.Gold}   Ходов: {_turns}\n" +
+            RecordScore() + "\n" +
+            "R — новый забег  •  Esc — в главное меню");
+    }
+
+    /// <summary>Записывает результат в таблицу рекордов и возвращает строку о месте в ней.</summary>
+    private string RecordScore()
+    {
+        if (IsTestRun)
+            return ""; // самопроверка и симуляция не засоряют таблицу рекордов
+        int place = HighScores.Add(new ScoreEntry(_floor, _kills, _player.Level, DateTime.Now.ToString("dd.MM.yyyy HH:mm"),
+            _player.Class.Name, _difficulty.Name, _victory));
+        return place switch
         {
             1 => "Новый рекорд!\n",
             > 1 => $"Место в таблице рекордов: {place}\n",
             _ => "",
         };
-
-        _hud.ShowGameOver(
-            $"Ты погиб на этаже {_floor}\n" +
-            $"Тебя одолел: {killerName}\n" +
-            $"Побеждено врагов: {_kills}   Золото: {_player.Gold}\n" +
-            placeText + "\n" +
-            "R — начать заново  •  Esc — в главное меню");
     }
 
     private void NextFloor()
@@ -418,10 +458,10 @@ public partial class GameManager : Node3D, IGameWorld
         _player.Teleport(_map.StartPos);
         _camera.SnapToTarget();
 
-        int enemyCount = Math.Min(3 + _floor * 2, 25);
+        int enemyCount = Math.Min(2 + _floor * 3 / 2, 22); // подобрано по симуляциям
         SpawnEnemies(bossFloor ? enemyCount / 2 : enemyCount);
         SpawnChests();
-        SpawnItems(_rng.Next(3, 6));
+        SpawnItems(_rng.Next(3, 6) + _difficulty.ItemsPerFloor);
         SpawnGold(_rng.Next(2, 5));
         if (!bossFloor)
             SpawnTraps();
@@ -432,8 +472,10 @@ public partial class GameManager : Node3D, IGameWorld
 
         UpdateFov();
         UpdateHud();
-        if (bossFloor)
-            _hud.AddMessage("Ты чувствуешь присутствие чего-то огромного... Лестница откроется после победы над боссом.", DamageColor);
+        if (bossFloor && _boss.IsFinalBoss)
+            _hud.AddMessage("Здесь, в глубине, ждёт Владыка бездны. Победи его — и подземелье будет пройдено!", DamageColor);
+        else if (bossFloor)
+            _hud.AddMessage($"Ты чувствуешь присутствие чего-то огромного... Здесь {_boss.DisplayName}. Лестница откроется после победы.", DamageColor);
         else if (_floor == 1 || Themes.IndexFor(_floor - 1) != themeIndex)
             _hud.AddMessage($"Этаж {_floor}: {_map.Theme.Name}.", InfoColor);
         else
@@ -463,7 +505,7 @@ public partial class GameManager : Node3D, IGameWorld
             blocker.QueueFree();
         }
 
-        _boss = SpawnEnemy(Enemy.BossType, cell);
+        _boss = SpawnEnemy(Enemy.BossForFloor(_floor), cell);
     }
 
     private void ClearLevelObjects()
@@ -537,6 +579,7 @@ public partial class GameManager : Node3D, IGameWorld
     /// <summary>После любого действия игрока, которое тратит ход, ходят враги и тикают эффекты.</summary>
     private void EndPlayerTurn()
     {
+        _turns++;
         EnemiesTurn();
         if (_state == GameState.GameOver)
             return;
@@ -602,25 +645,31 @@ public partial class GameManager : Node3D, IGameWorld
         Effects.Burst(this, enemy.GridPos, enemy.Type.Color, enemy.IsBoss ? 60 : 20);
         _sound.Play(Sound.Kill);
 
-        if (enemy == _boss)
-            OnBossKilled(enemy);
-        else
-            DropLoot(enemy);
-
-        if (_kills % KillsPerLevel == 0)
+        // Опыт — раньше проверки босса: иначе экран победы показал бы уровень без опыта за финального босса
+        int levels = _player.GainExperience(enemy.ExperienceReward);
+        if (levels > 0)
         {
-            _player.LevelUp();
-            _pendingLevelUps++; // окно выбора улучшения покажем в конце хода
+            _pendingLevelUps += levels; // окно выбора улучшения покажем в конце хода
             _hud.AddMessage($"Новый уровень: {_player.Level}!", InfoColor);
             Effects.FloatingText(this, _player.GridPos, "Уровень!", InfoColor);
             Effects.Burst(this, _player.GridPos, InfoColor, 24);
             _sound.Play(Sound.LevelUp);
         }
+
+        if (enemy == _boss)
+            OnBossKilled(enemy);
+        else
+            DropLoot(enemy);
     }
 
     private void OnBossKilled(Enemy boss)
     {
         _boss = null;
+        if (boss.IsFinalBoss)
+        {
+            Victory();
+            return;
+        }
         var stairs = _map.StairsPos;
         _map.Tiles[stairs.X, stairs.Y] = Tile.Stairs;
         _hud.AddMessage("Босс повержен! Путь вниз открыт.", InfoColor);
@@ -668,7 +717,7 @@ public partial class GameManager : Node3D, IGameWorld
     private Enemy SpawnEnemy(EnemyType type, Vector2I cell)
     {
         var enemy = new Enemy();
-        enemy.Setup(type, _floor);
+        enemy.Setup(type, _floor, _difficulty);
         AddChild(enemy);
         enemy.Teleport(cell);
         enemy.Visible = _visible.Contains(cell);

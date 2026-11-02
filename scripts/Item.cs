@@ -222,8 +222,8 @@ public static class ItemCatalog
     public static readonly ItemTemplate SightAmulet = new("Амулет зоркости", ItemKind.Amulet, new Stats(Vision: 3), 0, new Color(0.4f, 0.8f, 1f), 1, 3, 30);
     public static readonly ItemTemplate VampireAmulet = new("Амулет крови", ItemKind.Amulet, new Stats(Lifesteal: 2), 0, new Color(0.7f, 0.1f, 0.2f), 3, 3, 50);
 
-    public static readonly ItemTemplate HealthPotion = new("Зелье лечения", ItemKind.HealthPotion, default, 10, new Color(1f, 0.3f, 0.5f), 1, 30, 12);
-    public static readonly ItemTemplate GreatHealthPotion = new("Большое зелье", ItemKind.HealthPotion, default, 20, new Color(1f, 0.15f, 0.3f), 3, 12, 25);
+    public static readonly ItemTemplate HealthPotion = new("Зелье лечения", ItemKind.HealthPotion, default, 12, new Color(1f, 0.3f, 0.5f), 1, 30, 12);
+    public static readonly ItemTemplate GreatHealthPotion = new("Большое зелье", ItemKind.HealthPotion, default, 25, new Color(1f, 0.15f, 0.3f), 3, 12, 25);
     public static readonly ItemTemplate StrengthPotion = new("Зелье силы", ItemKind.StrengthPotion, default, 3, new Color(1f, 0.55f, 0.1f), 2, 8, 20);
     public static readonly ItemTemplate InvisibilityPotion = new("Зелье невидимости", ItemKind.InvisibilityPotion, default, 12, new Color(0.7f, 0.9f, 0.95f), 2, 6, 25);
     public static readonly ItemTemplate TeleportScroll = new("Свиток телепорта", ItemKind.TeleportScroll, default, 0, new Color(0.4f, 0.6f, 1f), 1, 9, 15);
