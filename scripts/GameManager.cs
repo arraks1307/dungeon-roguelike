@@ -11,6 +11,7 @@ public enum GameState
     Playing,
     Inventory,
     Shop,
+    LevelUp,
     Paused,
     GameOver,
 }
@@ -166,9 +167,17 @@ public partial class GameManager : Node3D, IGameWorld
         _shopPanel.BuyRequested += BuyItem;
         _shopPanel.SellRequested += SellItem;
 
+        _levelUpPanel = new LevelUpPanel();
+        AddChild(_levelUpPanel);
+        _levelUpPanel.PerkChosen += OnPerkChosen;
+
+        _classSelect = new ClassSelectPanel();
+        AddChild(_classSelect);
+        _classSelect.ClassChosen += StartNewGame;
+
         _mainMenu = new MainMenu();
         AddChild(_mainMenu);
-        _mainMenu.NewGameRequested += StartNewGame;
+        _mainMenu.NewGameRequested += OpenClassSelect;
         _mainMenu.ContinueRequested += ContinueGame;
         _mainMenu.SettingsRequested += OpenSettings;
 
@@ -220,6 +229,15 @@ public partial class GameManager : Node3D, IGameWorld
 
         switch (key.PhysicalKeycode)
         {
+            case Key.Escape when _state == GameState.Menu && _classSelect.Visible:
+                CloseClassSelect();
+                break;
+            case Key.F when _state == GameState.Playing:
+                UseSkill(0);
+                break;
+            case Key.G when _state == GameState.Playing:
+                UseSkill(1);
+                break;
             case Key.Escape:
                 switch (_state)
                 {
@@ -244,7 +262,7 @@ public partial class GameManager : Node3D, IGameWorld
                 QuickUse((int)(key.PhysicalKeycode - Key.Key1));
                 break;
             case Key.R when _state == GameState.GameOver:
-                StartNewGame();
+                StartNewGame(_player.Class); // заново тем же классом
                 break;
             case Key.M when _state == GameState.Playing:
                 _hud.ToggleMinimap();
@@ -299,27 +317,31 @@ public partial class GameManager : Node3D, IGameWorld
         _pauseMenu.Visible = false;
         _inventoryPanel.Visible = false;
         _shopPanel.Visible = false;
+        _levelUpPanel.Visible = false;
+        _classSelect.Visible = false;
         _camera.MenuMode = true;
         _camera.MenuCenter = new Vector3(MapWidth / 2f, 0f, MapHeight / 2f);
         _camera.SnapToTarget();
         _mainMenu.ShowMain();
     }
 
-    private void StartNewGame()
+    private void StartNewGame(ClassDef playerClass)
     {
         _state = GameState.Playing;
         _floor = _startFloor - 1;
         _kills = 0;
+        _pendingLevelUps = 0;
         _mainMenu.Visible = false;
+        _classSelect.Visible = false;
         _hud.Visible = true;
         _hud.HideGameOver();
         _hud.ClearMessages();
         _player.Visible = true;
-        _player.ResetStats();
+        _player.ResetStats(playerClass);
         _camera.MenuMode = false;
 
         NextFloor();
-        _hud.AddMessage("Ты спускаешься в подземелье. Найди золотую лестницу.", InfoColor);
+        _hud.AddMessage($"{playerClass.Name} спускается в подземелье. Найди золотую лестницу. F и G — способности.", InfoColor);
     }
 
     private void Pause()
@@ -366,7 +388,7 @@ public partial class GameManager : Node3D, IGameWorld
 
         // В режиме самопроверки не засоряем таблицу рекордов
         int place = _screenshotPath == null
-            ? HighScores.Add(new ScoreEntry(_floor, _kills, _player.Level, DateTime.Now.ToString("dd.MM.yyyy HH:mm")))
+            ? HighScores.Add(new ScoreEntry(_floor, _kills, _player.Level, DateTime.Now.ToString("dd.MM.yyyy HH:mm"), _player.Class.Name))
             : 0;
         string placeText = place switch
         {
@@ -530,6 +552,7 @@ public partial class GameManager : Node3D, IGameWorld
         SearchSurroundings();
         UpdateFov();
         UpdateHud();
+        TryShowLevelUp();
     }
 
     private void AttackEnemy(Enemy enemy)
@@ -587,7 +610,8 @@ public partial class GameManager : Node3D, IGameWorld
         if (_kills % KillsPerLevel == 0)
         {
             _player.LevelUp();
-            _hud.AddMessage($"Новый уровень: {_player.Level}! Атака и здоровье выросли.", InfoColor);
+            _pendingLevelUps++; // окно выбора улучшения покажем в конце хода
+            _hud.AddMessage($"Новый уровень: {_player.Level}!", InfoColor);
             Effects.FloatingText(this, _player.GridPos, "Уровень!", InfoColor);
             Effects.Burst(this, _player.GridPos, InfoColor, 24);
             _sound.Play(Sound.LevelUp);

@@ -16,6 +16,7 @@ public partial class GameManager
     private int _frame;
     private int _startFloor = 1;
     private bool _godMode; // игрок не может погибнуть
+    private ClassDef _testClass; // null — случайный класс
 
     private void ParseCommandLine()
     {
@@ -31,6 +32,14 @@ public partial class GameManager
                 _godMode = true;
             else if (arg.StartsWith("--start-floor="))
                 _startFloor = int.Parse(arg["--start-floor=".Length..]);
+            else if (arg.StartsWith("--class="))
+                _testClass = arg["--class=".Length..] switch
+                {
+                    "warrior" => ClassCatalog.Warrior,
+                    "ranger" => ClassCatalog.Ranger,
+                    "mage" => ClassCatalog.Mage,
+                    _ => null,
+                };
         }
 
         // Самопроверка не должна трогать настоящее сохранение игрока
@@ -63,19 +72,17 @@ public partial class GameManager
         {
             if (_screenshotView == "scores")
                 _mainMenu.ShowScores();
+            else if (_screenshotView == "classes")
+                OpenClassSelect();
             else if (!inMenu)
-                StartNewGame();
+                StartNewGame(_testClass ?? ClassCatalog.All[_rng.Next(ClassCatalog.All.Length)]);
         }
 
         int moveFrames = inMenu ? 0 : _autoMoves * 3;
         if (_frame <= moveFrames)
         {
             if (_frame % 3 == 0)
-                OnPlayerAction(AutoPilotDirection());
-            if (_frame % 30 == 0 && _state == GameState.Playing && _player.Inventory.Items.Count > 0)
-                QuickUse(_rng.Next(_player.Inventory.Items.Count));
-            if (_state == GameState.Shop)
-                CloseShop(); // автопилот случайно зашёл к торговцу
+                AutoPilotTurn();
             return;
         }
 
@@ -84,7 +91,7 @@ public partial class GameManager
 
         if (_frame == moveFrames + 40)
         {
-            GD.Print($"Самопроверка: этаж {_floor}, убито {_kills}, здоровье {_player.Hp}, " +
+            GD.Print($"Самопроверка ({_player.Class.Name}, ур. {_player.Level}): этаж {_floor}, убито {_kills}, здоровье {_player.Hp}, " +
                      $"золото {_player.Gold}, предметов {_player.Inventory.Items.Count}, состояние {_state}");
             GetViewport().GetTexture().GetImage().SavePng(_screenshotPath);
             GetTree().Quit();
@@ -135,6 +142,75 @@ public partial class GameManager
                 GD.Print(before == after ? "Сохранение: СОВПАДАЕТ" : "Сохранение: РАЗЛИЧАЕТСЯ");
                 break;
         }
+    }
+
+    /// <summary>
+    /// Один ход автопилота. Он не гений, но старается вести себя разумно: выбирает улучшения,
+    /// пьёт зелье при низком здоровье, надевает экипировку, пользуется способностями.
+    /// </summary>
+    private void AutoPilotTurn()
+    {
+        switch (_state)
+        {
+            case GameState.LevelUp:
+                OnPerkChosen(ClassCatalog.RollPerks(_rng)[0]);
+                return;
+            case GameState.Shop:
+                CloseShop(); // автопилот случайно зашёл к торговцу
+                return;
+            case GameState.Inventory:
+                CloseInventory();
+                return;
+            case not GameState.Playing:
+                return;
+        }
+
+        var items = _player.Inventory.Items;
+        int potion = items.FindIndex(item => item.Kind == ItemKind.HealthPotion);
+        if (_player.Hp < _player.MaxHp * 0.4f && potion >= 0)
+        {
+            QuickUse(potion);
+            return;
+        }
+
+        // Надеваем вещь, только если она лучше надетой — иначе автопилот менял бы их туда-обратно вечно
+        int upgrade = items.FindIndex(item => item.IsEquipment &&
+            GearScore(item) > GearScore(_player.Inventory.GetEquipped(item.Slot)));
+        if (upgrade >= 0)
+        {
+            QuickUse(upgrade);
+            return;
+        }
+
+        bool enemyNear = _enemies.Any(enemy => _visible.Contains(enemy.GridPos) && ChebyshevDistance(enemy.GridPos, _player.GridPos) <= 3);
+        for (int i = 0; i < 2; i++)
+        {
+            if (enemyNear && _player.SkillCooldowns[i] == 0 && _rng.NextDouble() < 0.5)
+            {
+                int before = _player.SkillCooldowns[i];
+                UseSkill(i);
+                if (_player.SkillCooldowns[i] != before || _state != GameState.Playing)
+                    return; // способность сработала — ход потрачен
+            }
+        }
+
+        if (_rng.NextDouble() < 0.05 && items.Count > 0)
+        {
+            QuickUse(_rng.Next(items.Count)); // иногда пробует случайный предмет
+            return;
+        }
+
+        OnPlayerAction(AutoPilotDirection());
+    }
+
+    /// <summary>Грубая оценка полезности вещи для автопилота (пустой слот — ноль).</summary>
+    private static int GearScore(Item item)
+    {
+        if (item == null)
+            return 0;
+        var s = item.Stats;
+        return s.Attack * 3 + s.Defense * 3 + s.MaxHp / 3 + s.Crit / 5 + s.Lifesteal * 2 +
+               s.Thorns + s.Regen * 2 + s.Vision + s.FireDamage * 2;
     }
 
     /// <summary>Автопилот: чаще идёт к лестнице, иногда шагает случайно.</summary>

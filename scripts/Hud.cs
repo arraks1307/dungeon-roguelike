@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using System.Linq;
 using Godot;
 
 namespace Roguelike;
@@ -16,6 +17,7 @@ public partial class Hud : CanvasLayer
     private Label _infoLabel;
     private Label _gearLabel;
     private Label _effectsLabel;
+    private Label _skillsLabel;
     private HBoxContainer _hotbar;
     private Minimap _minimap;
     private VBoxContainer _log;
@@ -65,6 +67,9 @@ public partial class Hud : CanvasLayer
         _gearLabel.Modulate = new Color(1f, 1f, 1f, 0.8f);
         stats.AddChild(_gearLabel);
 
+        _skillsLabel = Ui.CreateLabel(16);
+        stats.AddChild(_skillsLabel);
+
         _effectsLabel = Ui.CreateLabel(16);
         _effectsLabel.AddThemeColorOverride("font_color", new Color(0.6f, 0.9f, 1f));
         stats.AddChild(_effectsLabel);
@@ -91,7 +96,7 @@ public partial class Hud : CanvasLayer
 
         var help = Ui.CreateLabel(14,
             "WASD / стрелки — ход и атака  •  Q E Z C — диагонали  •  Пробел — ждать  •  " +
-            "I — инвентарь  •  1–5 — слоты  •  Колёсико — зум  •  M — карта  •  Esc — пауза");
+            "F G — способности  •  I — инвентарь  •  1–5 — слоты  •  M — карта  •  Esc — пауза");
         help.Modulate = new Color(1f, 1f, 1f, 0.6f);
         column.AddChild(help);
 
@@ -151,6 +156,17 @@ public partial class Hud : CanvasLayer
                           $"Защита: {player.Defense}   Побеждено: {kills}";
         _gearLabel.Text = $"Золото: {player.Gold}   Сумка: {player.Inventory.Items.Count}/{Inventory.Capacity}   " +
                           $"Оружие: {player.Inventory.GetEquipped(EquipSlot.Weapon)?.Name ?? "нет"}";
+
+        // Способности: готовая подсвечена цветом класса, перезаряжающаяся — серая с числом ходов
+        var skills = player.Class.Skills.Select((skill, i) =>
+        {
+            int cooldown = player.SkillCooldowns[i];
+            string key = i == 0 ? "F" : "G";
+            return cooldown == 0 ? $"{key}: {skill.Name}" : $"{key}: {skill.Name} ({cooldown})";
+        });
+        _skillsLabel.Text = $"{player.Class.Name}  •  " + string.Join("   ", skills);
+        bool anyReady = player.SkillCooldowns.Any(cooldown => cooldown == 0);
+        _skillsLabel.AddThemeColorOverride("font_color", anyReady ? player.Class.Color.Lightened(0.4f) : new Color(0.6f, 0.6f, 0.6f));
 
         var effects = new List<string>();
         if (player.StrengthTurns > 0)

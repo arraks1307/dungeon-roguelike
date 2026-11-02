@@ -19,7 +19,7 @@ public partial class GameManager
     }
 
     private bool IsRunInProgress =>
-        _state is GameState.Playing or GameState.Paused or GameState.Inventory or GameState.Shop;
+        _state is GameState.Playing or GameState.Paused or GameState.Inventory or GameState.Shop or GameState.LevelUp;
 
     private void SaveRun()
     {
@@ -34,6 +34,7 @@ public partial class GameManager
         {
             Floor = _floor,
             Kills = _kills,
+            PendingLevelUps = _pendingLevelUps,
             Player = _player.CreateSave(),
             Map = MapSave.From(_map),
             Enemies = _enemies.Where(enemy => !enemy.IsDead).Select(enemy => enemy.CreateSave()).ToList(),
@@ -74,6 +75,7 @@ public partial class GameManager
         _hud.AddMessage($"Забег продолжается. Этаж {_floor}.", InfoColor);
         UpdateFov();
         UpdateHud();
+        TryShowLevelUp(); // если вышли, не успев выбрать улучшение
     }
 
     private bool TryRestore(SaveData data)
@@ -83,6 +85,8 @@ public partial class GameManager
             ClearLevelObjects();
             _floor = data.Floor;
             _kills = data.Kills;
+            _pendingLevelUps = data.PendingLevelUps;
+            _levelUpPanel.Visible = false;
             _map = data.Map.ToMap();
             _renderer.Build(_map);
             ApplyTheme();

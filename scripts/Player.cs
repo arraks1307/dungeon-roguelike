@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Linq;
 using Godot;
 
@@ -6,8 +7,8 @@ namespace Roguelike;
 
 /// <summary>
 /// Игрок: читает клавиши движения и сообщает GameManager, что хочет сделать.
-/// Хранит характеристики, инвентарь, золото и временные эффекты зелий.
-/// Остальные клавиши (Esc, R, M, I, 1–5, колёсико) обрабатывает GameManager.
+/// Хранит класс, характеристики, инвентарь, золото, улучшения, перезарядку способностей
+/// и временные эффекты зелий. Остальные клавиши обрабатывает GameManager.
 /// </summary>
 public partial class Player : Actor
 {
@@ -17,30 +18,35 @@ public partial class Player : Actor
     /// <summary>Направление шага. Vector2I.Zero означает «пропустить ход».</summary>
     public event Action<Vector2I> ActionRequested;
 
+    public ClassDef Class { get; private set; } = ClassCatalog.Warrior;
     public int Level { get; private set; }
     public int Gold { get; set; }
     public Inventory Inventory { get; } = new();
 
-    /// <summary>Сумма бонусов всей надетой экипировки.</summary>
+    /// <summary>Сумма бонусов надетой экипировки и выбранных улучшений.</summary>
     public Stats Bonuses { get; private set; }
+
+    /// <summary>Сколько ходов осталось до готовности каждой из двух способностей (0 — готова).</summary>
+    public int[] SkillCooldowns { get; } = new int[2];
 
     public int StrengthTurns { get; private set; }
     public int InvisibleTurns { get; private set; }
     public bool IsInvisible => InvisibleTurns > 0;
     public bool IsHurt => Hp < MaxHp;
 
-    // Базовые значения без экипировки: растут с уровнем
+    // Базовые значения без экипировки: зависят от класса и растут с уровнем
     private int _baseAttack;
     private int _baseMaxHp;
     private int _strengthBonus;
     private int _turnCounter;
+    private readonly List<Perk> _perks = new();
 
     protected override Color DisplayColor => IsInvisible ? new Color(BaseColor, InvisibleAlpha) : BaseColor;
 
     public override void _Ready()
     {
         DisplayName = "Ты";
-        CreateBody(new CapsuleMesh { Radius = 0.25f, Height = 0.9f }, new Color(0.3f, 0.55f, 1f), 0.45f);
+        CreateBody(new CapsuleMesh { Radius = 0.25f, Height = 0.9f }, Class.Color, 0.45f);
         BodyMaterial.Transparency = BaseMaterial3D.TransparencyEnum.Alpha; // для невидимости
 
         // «Факел» — тёплый точечный свет, который двигается вместе с игроком
@@ -53,38 +59,65 @@ public partial class Player : Actor
             ShadowEnabled = true,
         });
 
-        ResetStats();
+        ResetStats(ClassCatalog.Warrior);
     }
 
-    public void ResetStats()
+    public void ResetStats(ClassDef playerClass)
     {
+        SetClass(playerClass);
         Level = 1;
         Gold = 0;
-        _baseAttack = 3;
-        _baseMaxHp = 30;
+        _baseAttack = playerClass.Attack;
+        _baseMaxHp = playerClass.MaxHp;
         StrengthTurns = 0;
         InvisibleTurns = 0;
         _turnCounter = 0;
+        _perks.Clear();
+        Array.Clear(SkillCooldowns);
         BodyMaterial.AlbedoColor = DisplayColor;
 
-        // Стартовый набор: кинжал в руках и одно зелье в сумке
+        // Стартовый набор класса: экипировку сразу надеваем, остальное кладём в сумку
         Inventory.Clear();
-        Inventory.TryAdd(new Item(ItemCatalog.Dagger));
-        Inventory.Equip(0);
-        Inventory.TryAdd(new Item(ItemCatalog.HealthPotion));
+        foreach (var template in playerClass.StartingItems)
+        {
+            Inventory.TryAdd(new Item(template));
+            var added = Inventory.Items[^1];
+            if (added.IsEquipment && Inventory.GetEquipped(added.Slot) == null)
+                Inventory.Equip(Inventory.Items.Count - 1);
+        }
 
         RecalculateStats();
         Hp = MaxHp;
     }
 
+    private void SetClass(ClassDef playerClass)
+    {
+        Class = playerClass;
+        BaseColor = playerClass.Color;
+    }
+
+    /// <summary>Повышение уровня: небольшой рост характеристик. Главное — улучшение на выбор, его применяет ApplyPerk.</summary>
     public void LevelUp()
     {
         Level++;
-        _baseMaxHp += 5;
+        _baseMaxHp += 4;
         _baseAttack++;
         RecalculateStats();
-        Heal(5);
+        Heal(4);
     }
+
+    public void ApplyPerk(Perk perk)
+    {
+        _perks.Add(perk);
+        int before = MaxHp;
+        RecalculateStats();
+        Heal(MaxHp - before); // выросло максимальное здоровье — текущее растёт вместе с ним
+    }
+
+    public int CooldownReduction => _perks.Sum(perk => perk.CooldownReduction);
+
+    public void StartCooldown(int skillIndex) =>
+        SkillCooldowns[skillIndex] = Math.Max(1, Class.Skills[skillIndex].Cooldown - CooldownReduction);
 
     public void Heal(int amount) => Hp = Mathf.Min(Hp + amount, MaxHp);
 
@@ -114,12 +147,16 @@ public partial class Player : Actor
     }
 
     /// <summary>
-    /// Вызывается в конце каждого хода: отсчитывает эффекты зелий и регенерацию.
+    /// Вызывается в конце каждого хода: отсчитывает эффекты зелий, перезарядку и регенерацию.
     /// Возвращает, сколько здоровья восстановилось и какие эффекты закончились.
     /// </summary>
     public (int Healed, bool StrengthEnded, bool InvisibilityEnded) TickEffects()
     {
         _turnCounter++;
+        for (int i = 0; i < SkillCooldowns.Length; i++)
+            if (SkillCooldowns[i] > 0)
+                SkillCooldowns[i]--;
+
         int healed = 0;
         if (Bonuses.Regen > 0 && IsHurt && _turnCounter % RegenInterval == 0)
         {
@@ -143,6 +180,7 @@ public partial class Player : Actor
     {
         X = GridPos.X,
         Y = GridPos.Y,
+        Class = Class.Class,
         Level = Level,
         Hp = Hp,
         Gold = Gold,
@@ -152,12 +190,15 @@ public partial class Player : Actor
         StrengthBonus = _strengthBonus,
         InvisibleTurns = InvisibleTurns,
         TurnCounter = _turnCounter,
+        Cooldowns = SkillCooldowns.ToArray(),
+        Perks = _perks.Select(perk => perk.Name).ToList(),
         Items = Inventory.Items.Select(ItemSave.From).ToList(),
         Equipped = Inventory.Equipped.Select(ItemSave.From).ToList(),
     };
 
     public void RestoreSave(PlayerSave save)
     {
+        SetClass(ClassCatalog.Get(save.Class));
         Level = save.Level;
         Gold = save.Gold;
         _baseAttack = save.BaseAttack;
@@ -166,6 +207,11 @@ public partial class Player : Actor
         _strengthBonus = save.StrengthBonus;
         InvisibleTurns = save.InvisibleTurns;
         _turnCounter = save.TurnCounter;
+        Array.Clear(SkillCooldowns);
+        for (int i = 0; i < Math.Min(save.Cooldowns?.Length ?? 0, SkillCooldowns.Length); i++)
+            SkillCooldowns[i] = save.Cooldowns[i];
+        _perks.Clear();
+        _perks.AddRange((save.Perks ?? new List<string>()).Select(ClassCatalog.FindPerk).Where(perk => perk != null));
 
         Inventory.Clear();
         foreach (var item in save.Equipped.Select(s => s.ToItem()).Where(item => item != null))
@@ -184,6 +230,8 @@ public partial class Player : Actor
         var total = new Stats();
         foreach (var item in Inventory.Equipped)
             total += item.Stats;
+        foreach (var perk in _perks)
+            total += perk.Bonus;
         Bonuses = total;
 
         Attack = _baseAttack + Bonuses.Attack + (StrengthTurns > 0 ? _strengthBonus : 0);

@@ -5,7 +5,12 @@ using Godot;
 
 namespace Roguelike;
 
-public record ScoreEntry(int Floor, int Kills, int Level, string Date);
+/// <summary>
+/// Запись в таблице рекордов. Новые поля идут в конце со значениями по умолчанию,
+/// поэтому старые файлы рекордов (без них) по-прежнему читаются.
+/// </summary>
+public record ScoreEntry(int Floor, int Kills, int Level, string Date,
+    string Class = null, string Difficulty = null, bool Victory = false);
 
 /// <summary>
 /// Таблица рекордов. Хранится в JSON-файле в папке user:// — это папка данных игры,
@@ -38,7 +43,8 @@ public static class HighScores
         var scores = Load();
         scores.Add(entry);
         scores = scores
-            .OrderByDescending(score => score.Floor)
+            .OrderByDescending(score => score.Victory)
+            .ThenByDescending(score => score.Floor)
             .ThenByDescending(score => score.Kills)
             .ThenByDescending(score => score.Level)
             .Take(MaxEntries)

@@ -97,8 +97,8 @@ public partial class MainMenu : CanvasLayer
         }
         else
         {
-            _scoresGrid.Columns = 5;
-            foreach (var header in new[] { "#", "Этаж", "Убито", "Уровень", "Дата" })
+            _scoresGrid.Columns = 7;
+            foreach (var header in new[] { "#", "Герой", "Сложность", "Этаж", "Убито", "Уровень", "Дата" })
             {
                 var label = Ui.CreateLabel(18, header);
                 label.Modulate = new Color(1f, 1f, 1f, 0.6f);
@@ -107,8 +107,16 @@ public partial class MainMenu : CanvasLayer
             for (int i = 0; i < scores.Count; i++)
             {
                 var score = scores[i];
-                foreach (var cell in new[] { $"{i + 1}", $"{score.Floor}", $"{score.Kills}", $"{score.Level}", score.Date })
-                    _scoresGrid.AddChild(Ui.CreateLabel(20, cell));
+                // Победные забеги отмечаем звёздочкой и золотым цветом
+                string floor = score.Victory ? $"★ {score.Floor}" : $"{score.Floor}";
+                foreach (var cell in new[] { $"{i + 1}", score.Class ?? "—", score.Difficulty ?? "—", floor,
+                             $"{score.Kills}", $"{score.Level}", score.Date })
+                {
+                    var label = Ui.CreateLabel(20, cell);
+                    if (score.Victory)
+                        label.AddThemeColorOverride("font_color", Ui.TitleColor);
+                    _scoresGrid.AddChild(label);
+                }
             }
         }
 

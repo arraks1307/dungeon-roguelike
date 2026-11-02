@@ -17,6 +17,7 @@ public class SaveData
     public int Version = SaveSystem.CurrentVersion;
     public int Floor;
     public int Kills;
+    public int PendingLevelUps;
     public PlayerSave Player;
     public MapSave Map;
     public List<EnemySave> Enemies = new();
@@ -70,6 +71,9 @@ public class ItemSave
 public class PlayerSave
 {
     public int X, Y;
+    public PlayerClass Class;
+    public int[] Cooldowns = Array.Empty<int>();
+    public List<string> Perks = new();
     public int Level, Hp, Gold;
     public int BaseAttack, BaseMaxHp;
     public int StrengthTurns, StrengthBonus, InvisibleTurns, TurnCounter;
