@@ -32,7 +32,7 @@ public partial class GameManager
 
     private record SimResult(string Class, string Difficulty, int Floor, int Level, bool Victory, bool Timeout, int Turns);
 
-    private bool IsTestRun => _screenshotPath != null || _simulateGames > 0;
+    private bool IsTestRun => _screenshotPath != null || _simulateGames > 0 || _netTestRole != null;
 
     private void ParseCommandLine()
     {
@@ -70,6 +70,22 @@ public partial class GameManager
                 _testGraphics = arg["--graphics=".Length..] == "low" ? GraphicsQuality.Low : GraphicsQuality.High;
             else if (arg.StartsWith("--party="))
                 _testParty = System.Math.Clamp(int.Parse(arg["--party=".Length..]), 1, MaxPartySize);
+            else if (arg.StartsWith("--net-host="))
+            {
+                _netTestRole = "хост";
+                _netTestPlayers = System.Math.Clamp(int.Parse(arg["--net-host=".Length..]), 1, MaxPartySize);
+            }
+            else if (arg.StartsWith("--net-join="))
+            {
+                _netTestRole = "клиент";
+                _netTestAddress = arg["--net-join=".Length..];
+            }
+            else if (arg.StartsWith("--net-rounds="))
+                _netTestRounds = int.Parse(arg["--net-rounds=".Length..]);
+            else if (arg.StartsWith("--net-quit-at="))
+                _netTestQuitAt = int.Parse(arg["--net-quit-at=".Length..]);
+            else if (arg.StartsWith("--net-name="))
+                _netTestName = arg["--net-name=".Length..];
         }
 
         // Самопроверка не должна трогать настоящее сохранение игрока
@@ -111,11 +127,25 @@ public partial class GameManager
     private void RunSelfTest()
     {
         _frame++;
-        bool inMenu = _screenshotView is "menu" or "scores" or "classes" or "classconfirm";
+        bool inMenu = _screenshotView is "menu" or "scores" or "classes" or "classconfirm" or "connect" or "lobby";
 
         if (_frame == 1)
         {
-            if (_screenshotView == "scores")
+            if (_screenshotView == "connect")
+                OpenLobby();
+            else if (_screenshotView == "lobby")
+            {
+                // Комната хоста (только на этом компьютере), состав — как будто друзья уже подключились
+                OpenLobby();
+                _net.LoopbackOnly = true;
+                _net.Host("Данила", 0);
+                _lobby.OpenRoom(isHost: true);
+                _lobby.UpdateMembers(new List<LobbyMember>
+                {
+                    new(1, "Данила", 0), new(2, "Аня", 1), new(3, "Боря", 2),
+                }, myId: 1);
+            }
+            else if (_screenshotView == "scores")
                 _mainMenu.ShowScores();
             else if (_screenshotView == "classes")
                 OpenClassSelect();
@@ -231,7 +261,7 @@ public partial class GameManager
             if (_gameOver)
                 return;
             if (!hero.IsGhost && !hero.HasActed && hero.IsBot)
-                AutoPilotTurn(hero);
+                AutoPilotTurn(hero, action => PerformHeroAction(hero, action), _rng);
         }
     }
 
@@ -239,10 +269,12 @@ public partial class GameManager
     /// Один ход автопилота за героя. Он не гений, но старается вести себя разумно: пьёт зелье
     /// при низком здоровье, надевает экипировку получше, пользуется способностями, дерётся.
     /// Если выбранное действие не сработало (стена, нет цели), пробует случайный шаг.
+    /// tryAction — как выполнить действие (сразу или отправить по сети), rng — чья случайность
+    /// решает за бота: в сетевой проверке это не _rng, иначе миры у компьютеров разошлись бы.
     /// </summary>
-    private void AutoPilotTurn(Player hero)
+    private void AutoPilotTurn(Player hero, System.Func<HeroAction, bool> tryAction, System.Random rng)
     {
-        bool Try(HeroAction action) => PerformHeroAction(hero, action);
+        bool Try(HeroAction action) => tryAction(action);
 
         var items = hero.Inventory.Items;
         int potion = items.FindIndex(item => item.Kind == ItemKind.HealthPotion);
@@ -257,10 +289,10 @@ public partial class GameManager
 
         bool enemyNear = _enemies.Any(enemy => _visible.Contains(enemy.GridPos) && ChebyshevDistance(enemy.GridPos, hero.GridPos) <= 3);
         for (int i = 0; i < 2; i++)
-            if (enemyNear && hero.SkillCooldowns[i] == 0 && _rng.NextDouble() < 0.5 && Try(HeroAction.Skill(i)))
+            if (enemyNear && hero.SkillCooldowns[i] == 0 && rng.NextDouble() < 0.5 && Try(HeroAction.Skill(i)))
                 return;
 
-        if (_rng.NextDouble() < 0.05 && items.Count > 0 && Try(HeroAction.UseItem(_rng.Next(items.Count))))
+        if (rng.NextDouble() < 0.05 && items.Count > 0 && Try(HeroAction.UseItem(rng.Next(items.Count))))
             return; // иногда пробует случайный предмет
 
         // Враг вплотную — бьём самого раненого, а не убегаем к лестнице
@@ -268,12 +300,12 @@ public partial class GameManager
             .Where(enemy => _map.AreAdjacent(hero.GridPos, enemy.GridPos))
             .OrderBy(enemy => enemy.Hp)
             .FirstOrDefault();
-        var direction = adjacent != null ? adjacent.GridPos - hero.GridPos : AutoPilotDirection(hero);
+        var direction = adjacent != null ? adjacent.GridPos - hero.GridPos : AutoPilotDirection(hero, rng);
         if (Try(HeroAction.Move(direction)))
             return;
 
         for (int attempt = 0; attempt < 4; attempt++)
-            if (Try(HeroAction.Move(DungeonMap.Directions[_rng.Next(DungeonMap.Directions.Length)])))
+            if (Try(HeroAction.Move(DungeonMap.Directions[rng.Next(DungeonMap.Directions.Length)])))
                 return;
         Try(HeroAction.Wait); // совсем некуда — пропускаем ход, чтобы раунд не завис
     }
@@ -409,10 +441,10 @@ public partial class GameManager
     /// Автопилот ведёт себя как обычный игрок: пока здоровья хватает, идёт драться с видимыми
     /// врагами (опыт и добыча), иначе — к лестнице. Иногда шагает случайно, чтобы не застревать.
     /// </summary>
-    private Vector2I AutoPilotDirection(Player hero)
+    private Vector2I AutoPilotDirection(Player hero, System.Random rng)
     {
-        var randomDirection = DungeonMap.Directions[_rng.Next(DungeonMap.Directions.Length)];
-        if (_rng.NextDouble() < 0.15)
+        var randomDirection = DungeonMap.Directions[rng.Next(DungeonMap.Directions.Length)];
+        if (rng.NextDouble() < 0.15)
             return randomDirection;
 
         var prey = _enemies

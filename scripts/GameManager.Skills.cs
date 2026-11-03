@@ -191,38 +191,57 @@ public partial class GameManager
     }
 
     /// <summary>
-    /// Раздать улучшения за новые уровни. Ботам (самопроверка) — сразу случайное;
+    /// Раздать улучшения за новые уровни. Ботам самопроверки — случайное сразу;
     /// своему герою — окно выбора, если сейчас не открыто никакое другое окно.
+    /// Сам выбор — действие Perk из общего потока: в сетевой игре его должны увидеть все.
+    /// Какие три улучшения предложить, решает _uiRng этого компьютера — на мир это не влияет.
     /// </summary>
     private void TryShowLevelUp()
     {
-        foreach (var hero in _heroes.Where(hero => hero.IsBot))
+        if (!_isNetworkGame)
         {
-            while (hero.PendingLevelUps > 0)
-            {
-                hero.ApplyPerk(ClassCatalog.RollPerks(_rng)[0]);
-                hero.PendingLevelUps--;
-            }
+            foreach (var hero in _heroes.Where(hero => hero.IsBot))
+                while (hero.PendingLevelUps > 0)
+                    ChoosePerk(hero, PerkIndex(ClassCatalog.RollPerks(_rng)[0]));
         }
 
         var local = _localHero;
-        if (local == null || local.IsBot || local.PendingLevelUps <= 0 || _state != GameState.Playing)
+        if (local == null || local.PendingLevelUps <= 0 || _gameOver || _actionInFlight)
+            return;
+        if (local.IsBot)
+        {
+            // Бот сетевой самопроверки: выбор уходит в общий поток, следующий — когда этот вернётся
+            if (_isNetworkGame)
+                SubmitLocalAction(HeroAction.Perk(PerkIndex(ClassCatalog.RollPerks(_uiRng)[0])));
+            return;
+        }
+        if (_state != GameState.Playing)
             return;
         _state = GameState.LevelUp;
-        _levelUpPanel.Open(local.Level - local.PendingLevelUps + 1, ClassCatalog.RollPerks(_rng));
+        _levelUpPanel.Open(local.Level - local.PendingLevelUps + 1, ClassCatalog.RollPerks(_uiRng));
     }
 
     private void OnPerkChosen(Perk perk)
     {
         if (_state != GameState.LevelUp)
             return;
-        _localHero.ApplyPerk(perk);
-        _hud.AddMessage($"Улучшение: {perk.Name}.", InfoColor);
-        _localHero.PendingLevelUps--;
         _levelUpPanel.Visible = false;
         _state = GameState.Playing;
+        SubmitLocalAction(HeroAction.Perk(PerkIndex(perk)), _ => TryShowLevelUp());
+    }
+
+    private static int PerkIndex(Perk perk) => Array.IndexOf(ClassCatalog.Perks, perk);
+
+    /// <summary>Герой берёт улучшение номер index (если у него есть невыбранное повышение уровня).</summary>
+    private void ChoosePerk(Player hero, int index)
+    {
+        if (hero.PendingLevelUps <= 0 || index < 0 || index >= ClassCatalog.Perks.Length)
+            return;
+        var perk = ClassCatalog.Perks[index];
+        hero.ApplyPerk(perk);
+        hero.PendingLevelUps--;
+        Tell(hero, $"Улучшение: {perk.Name}.", $"{hero.DisplayName} берёт улучшение: {perk.Name}.", InfoColor);
         UpdateFov(); // «Зоркость» сразу меняет обзор
         UpdateHud();
-        TryShowLevelUp();
     }
 }

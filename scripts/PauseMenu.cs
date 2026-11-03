@@ -14,6 +14,7 @@ public partial class PauseMenu : CanvasLayer
     public event Action SaveAndExitRequested;
 
     private Button _resumeButton;
+    private Button _exitButton;
 
     public override void _Ready()
     {
@@ -29,11 +30,14 @@ public partial class PauseMenu : CanvasLayer
         _resumeButton = Ui.CreateButton("Продолжить", () => ResumeRequested?.Invoke());
         column.AddChild(_resumeButton);
         column.AddChild(Ui.CreateButton("Настройки", () => SettingsRequested?.Invoke()));
-        column.AddChild(Ui.CreateButton("Сохранить и выйти в меню", () => SaveAndExitRequested?.Invoke()));
+        _exitButton = Ui.CreateButton("Сохранить и выйти в меню", () => SaveAndExitRequested?.Invoke());
+        column.AddChild(_exitButton);
     }
 
-    public void Open()
+    /// <summary>В сетевой игре пауза не останавливает мир (друзья продолжают ходить), а сохранения нет.</summary>
+    public void Open(bool network = false)
     {
+        _exitButton.Text = network ? "Покинуть отряд и выйти в меню" : "Сохранить и выйти в меню";
         Visible = true;
         Ui.FocusLater(_resumeButton);
     }

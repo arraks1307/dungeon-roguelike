@@ -16,6 +16,7 @@ public partial class MainMenu : CanvasLayer
     public event Action NewGameRequested;
     public event Action ContinueRequested;
     public event Action SettingsRequested;
+    public event Action NetworkRequested;
 
     private Button _continueButton;
     private VBoxContainer _mainPage;
@@ -60,6 +61,7 @@ public partial class MainMenu : CanvasLayer
 
         _continueButton = CreateMenuButton("Продолжить", () => ContinueRequested?.Invoke());
         _newGameButton = CreateMenuButton("Новая игра", () => NewGameRequested?.Invoke());
+        CreateMenuButton("Сетевая игра", () => NetworkRequested?.Invoke());
         CreateMenuButton("Рекорды", ShowScores);
         CreateMenuButton("Настройки", () => SettingsRequested?.Invoke());
         CreateMenuButton("Выход", () => GetTree().Quit());

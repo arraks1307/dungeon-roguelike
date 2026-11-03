@@ -52,7 +52,8 @@ public partial class GameManager : Node3D, IGameWorld
     private static readonly Color InfoColor = new(1f, 0.85f, 0.4f);
     private static readonly Color CritColor = new(1f, 0.9f, 0.2f);
 
-    private readonly Random _rng = new();
+    /// <summary>Случайность мира. В сетевой игре — с общим зерном, поэтому у всех одинаковая.</summary>
+    private GameRandom _rng = new();
     private readonly List<Enemy> _enemies = new();
     private readonly List<Player> _heroes = new();
     private HashSet<Vector2I> _visible = new();
@@ -205,8 +206,8 @@ public partial class GameManager : Node3D, IGameWorld
 
         _shopPanel = new ShopPanel();
         AddChild(_shopPanel);
-        _shopPanel.BuyRequested += BuyItem;
-        _shopPanel.SellRequested += SellItem;
+        _shopPanel.BuyRequested += OnShopBuy;
+        _shopPanel.SellRequested += OnShopSell;
 
         _levelUpPanel = new LevelUpPanel();
         AddChild(_levelUpPanel);
@@ -221,6 +222,7 @@ public partial class GameManager : Node3D, IGameWorld
         _mainMenu.NewGameRequested += OpenClassSelect;
         _mainMenu.ContinueRequested += ContinueGame;
         _mainMenu.SettingsRequested += OpenSettings;
+        _mainMenu.NetworkRequested += OpenLobby;
 
         _pauseMenu = new PauseMenu();
         AddChild(_pauseMenu);
@@ -232,12 +234,17 @@ public partial class GameManager : Node3D, IGameWorld
         AddChild(_settingsMenu);
         _settingsMenu.Closed += OnSettingsClosed;
 
+        SetupNetwork();
         ShowMainMenu();
+        if (_netTestRole != null)
+            StartNetTest();
     }
 
     public override void _Process(double delta)
     {
-        if (_simulateGames > 0)
+        if (_netTestRole != null)
+            RunNetTest();
+        else if (_simulateGames > 0)
             RunSimulation();
         else if (_screenshotPath != null)
             RunSelfTest();
@@ -272,6 +279,12 @@ public partial class GameManager : Node3D, IGameWorld
 
         switch (key.PhysicalKeycode)
         {
+            case Key.Escape when _state == GameState.Menu && _lobby.Visible:
+                if (_lobby.IsInRoom)
+                    LeaveLobby();
+                else
+                    CloseLobby();
+                break;
             case Key.Escape when _state == GameState.Menu && _classSelect.Visible:
                 if (_classSelect.IsConfirming)
                     _classSelect.CancelConfirm(); // с подтверждения — обратно к карточкам
@@ -302,13 +315,16 @@ public partial class GameManager : Node3D, IGameWorld
                 CloseInventory();
                 break;
             case Key.X when _state == GameState.Inventory:
-                DropItem(_inventoryPanel.FocusedIndex);
+                SubmitLocalAction(HeroAction.Drop(_inventoryPanel.FocusedIndex));
                 break;
             case >= Key.Key1 and <= Key.Key5 when _state == GameState.Playing:
                 QuickUse((int)(key.PhysicalKeycode - Key.Key1));
                 break;
             case Key.R when _state == GameState.GameOver:
-                StartRun(_partySpec, _difficulty); // заново тем же составом и на той же сложности
+                if (_net.IsActive)
+                    RestartNetworkRun();
+                else
+                    StartRun(_partySpec, _difficulty); // заново тем же составом и на той же сложности
                 break;
             case Key.M when _state == GameState.Playing:
                 _hud.ToggleMinimap();
@@ -388,7 +404,9 @@ public partial class GameManager : Node3D, IGameWorld
     /// <summary>Главное меню поверх случайного подземелья-заставки.</summary>
     private void ShowMainMenu()
     {
+        LeaveNetwork(); // из сетевой игры выход в меню — это выход из отряда
         _state = GameState.Menu;
+        _gameOver = false;
         ClearLevelObjects();
 
         _map = DungeonGenerator.Generate(MapWidth, MapHeight, _rng, themeIndex: _rng.Next(Themes.All.Length));
@@ -415,6 +433,7 @@ public partial class GameManager : Node3D, IGameWorld
         _shopPanel.Visible = false;
         _levelUpPanel.Visible = false;
         _classSelect.Visible = false;
+        _lobby.Visible = false;
         _camera.MenuMode = true;
         _camera.MenuCenter = new Vector3(MapWidth / 2f, 0f, MapHeight / 2f);
         UiTheme.SetAccent(UiTheme.DefaultAccent);
@@ -423,8 +442,11 @@ public partial class GameManager : Node3D, IGameWorld
     }
 
     /// <summary>Одиночная игра — отряд из одного героя.</summary>
-    private void StartNewGame(ClassDef playerClass, DifficultyDef difficulty) =>
+    private void StartNewGame(ClassDef playerClass, DifficultyDef difficulty)
+    {
+        _isNetworkGame = false;
         StartRun(new List<HeroSpec> { new(playerClass) }, difficulty);
+    }
 
     private void StartRun(List<HeroSpec> party, DifficultyDef difficulty, int localIndex = 0)
     {
@@ -457,7 +479,7 @@ public partial class GameManager : Node3D, IGameWorld
     private void Pause()
     {
         _state = GameState.Paused;
-        _pauseMenu.Open();
+        _pauseMenu.Open(_isNetworkGame);
     }
 
     private void Resume()
@@ -511,7 +533,9 @@ public partial class GameManager : Node3D, IGameWorld
     {
         _gameOver = true;
         _state = GameState.GameOver;
-        SaveSystem.Delete(); // смерть окончательна — продолжить этот забег нельзя
+        if (!_isNetworkGame)
+            SaveSystem.Delete(); // смерть окончательна — продолжить этот забег нельзя
+        CloseLocalWindows();
         UpdateHud();
         _sound.Play(Sound.Death);
         _camera.Shake(0.4f);
@@ -522,7 +546,25 @@ public partial class GameManager : Node3D, IGameWorld
             $"Последний удар: {killerName}\n" +
             $"Побеждено врагов: {_kills}   Золото: {_localHero.Gold}\n" +
             RecordScore() + "\n" +
-            "R — начать заново  •  Esc — в главное меню");
+            RestartHint);
+    }
+
+    private string RestartHint => _isNetworkGame && !_net.IsHost
+        ? "Новый забег начинает хост  •  Esc — в главное меню"
+        : "R — начать заново  •  Esc — в главное меню";
+
+    /// <summary>
+    /// Забег закончился, пока у этого игрока было открыто окно (в сетевой игре это мог сделать друг):
+    /// закрываем окна, чтобы был виден экран итогов.
+    /// </summary>
+    private void CloseLocalWindows()
+    {
+        _pauseMenu.Visible = false;
+        _inventoryPanel.Visible = false;
+        _shopPanel.Visible = false;
+        _levelUpPanel.Visible = false;
+        _settingsMenu.Visible = false;
+        _hud.Visible = true;
     }
 
     /// <summary>Финальный босс повержен — забег пройден.</summary>
@@ -531,7 +573,9 @@ public partial class GameManager : Node3D, IGameWorld
         _gameOver = true;
         _state = GameState.GameOver;
         _victory = true;
-        SaveSystem.Delete();
+        if (!_isNetworkGame)
+            SaveSystem.Delete();
+        CloseLocalWindows();
         UpdateHud();
         _sound.Play(Sound.LevelUp);
         _camera.Shake(0.5f);
@@ -545,13 +589,13 @@ public partial class GameManager : Node3D, IGameWorld
             $"{heroes}, сложность: {_difficulty.Name.ToLower()}\n" +
             $"Побеждено врагов: {_kills}   Золото: {_localHero.Gold}   Ходов: {_turns}\n" +
             RecordScore() + "\n" +
-            "R — новый забег  •  Esc — в главное меню");
+            RestartHint);
     }
 
     /// <summary>Записывает результат в таблицу рекордов и возвращает строку о месте в ней (только одиночная игра).</summary>
     private string RecordScore()
     {
-        if (IsTestRun || !IsSinglePlayer)
+        if (IsTestRun || !IsSinglePlayer || _isNetworkGame)
             return ""; // самопроверка, симуляция и игра отрядом не засоряют таблицу одиночных рекордов
         int place = HighScores.Add(new ScoreEntry(_floor, _kills, _localHero.Level, DateTime.Now.ToString("dd.MM.yyyy HH:mm"),
             _localHero.Class.Name, _difficulty.Name, _victory));
@@ -654,9 +698,9 @@ public partial class GameManager : Node3D, IGameWorld
     // ---------- Раунд: действия героев ----------
 
     /// <summary>
-    /// Единая точка входа для действий ЛЮБОГО героя: клавиатура своего героя, автопилот,
-    /// а на следующем этапе — сообщения по сети от друзей. Возвращает true, если ход потрачен.
-    /// Невалидное действие (шаг в стену, зелье при полном здоровье) ход не тратит.
+    /// Ход ЛЮБОГО героя: клавиатура своего героя, автопилот или действие друга из сети.
+    /// Возвращает true, если ход потрачен. Невалидное действие (шаг в стену, зелье при полном
+    /// здоровье) ход не тратит. «Свободные» действия — в ApplyHeroAction (GameManager.Network.cs).
     /// </summary>
     private bool PerformHeroAction(Player hero, HeroAction action)
     {
@@ -701,10 +745,6 @@ public partial class GameManager : Node3D, IGameWorld
         }
         return true;
     }
-
-    /// <summary>Действие своего героя — только когда на этом компьютере не открыто никакое окно.</summary>
-    private bool PerformLocalAction(HeroAction action) =>
-        _state == GameState.Playing && PerformHeroAction(_localHero, action);
 
     /// <summary>Шаг, атака, сундук или дверь. Возвращает true, если ход потрачен.</summary>
     private bool TryMove(Player hero, Vector2I direction)
@@ -771,9 +811,12 @@ public partial class GameManager : Node3D, IGameWorld
         if (!IsLocalHero(hero))
             return;
         bool enemyBefore = AnyEnemyVisible();
-        PerformLocalAction(HeroAction.Move(direction));
-        if (enemyBefore || AnyEnemyVisible())
-            StopWalking("враг в поле зрения при нажатии");
+        // В сетевой игре шаг выполнится чуть позже (когда вернётся от хоста) — проверку делаем тогда
+        PerformLocalAction(HeroAction.Move(direction), _ =>
+        {
+            if (enemyBefore || AnyEnemyVisible())
+                StopWalking("враг в поле зрения при нажатии");
+        });
     }
 
     /// <summary>
@@ -784,8 +827,8 @@ public partial class GameManager : Node3D, IGameWorld
     /// </summary>
     private void OnWalkRequested(Player hero, Vector2I direction)
     {
-        if (!IsLocalHero(hero) || hero.HasActed && !hero.IsGhost && !_gameOver)
-            return;
+        if (!IsLocalHero(hero) || _actionInFlight || hero.HasActed && !hero.IsGhost && !_gameOver)
+            return; // предыдущий шаг ещё в пути или ждём друзей — пропускаем этот «тик» ходьбы
 
         var target = hero.GridPos + direction;
         string blocker = _state != GameState.Playing ? "открыто окно"
@@ -806,17 +849,18 @@ public partial class GameManager : Node3D, IGameWorld
         int interestingBefore = VisibleInterestingThings();
         bool steppingOnSomething = _floorItems.ContainsKey(target) || _map.Get(target) == Tile.Stairs;
 
-        PerformLocalAction(HeroAction.Move(direction));
-
-        string reason = _state != GameState.Playing ? "открылось окно или смерть"
-            : _floor != floorBefore ? "новый этаж"
-            : hero.Hp < hpBefore ? "получен урон"
-            : steppingOnSomething ? "наступил на предмет или лестницу"
-            : AnyEnemyVisible() ? "показался враг"
-            : VisibleInterestingThings() > interestingBefore ? "показался предмет, сундук или торговец"
-            : null;
-        if (reason != null)
-            StopWalking(reason);
+        PerformLocalAction(HeroAction.Move(direction), _ =>
+        {
+            string reason = _state != GameState.Playing ? "открылось окно или смерть"
+                : _floor != floorBefore ? "новый этаж"
+                : hero.Hp < hpBefore ? "получен урон"
+                : steppingOnSomething ? "наступил на предмет или лестницу"
+                : AnyEnemyVisible() ? "показался враг"
+                : VisibleInterestingThings() > interestingBefore ? "показался предмет, сундук или торговец"
+                : null;
+            if (reason != null)
+                StopWalking(reason);
+        });
     }
 
     /// <summary>Причина последней остановки — её печатает самопроверка, чтобы ловить ложные остановки.</summary>
@@ -942,7 +986,8 @@ public partial class GameManager : Node3D, IGameWorld
         _hud.AddMessage("Босс повержен! Путь вниз открыт.", InfoColor);
 
         // Награда: предмет как будто с более глубокого этажа и золото каждому живому герою
-        var dropCell = boss.GridPos == stairs ? _localHero.GridPos : boss.GridPos;
+        // Не _localHero: у каждого компьютера свой «свой» герой, а мир должен получиться одинаковым
+        var dropCell = boss.GridPos == stairs ? LivingHeroes.First().GridPos : boss.GridPos;
         if (!_floorItems.ContainsKey(dropCell))
             PlaceItem(ItemCatalog.Roll(_rng, _floor + 3), dropCell);
         int gold = 50 + _floor * 10;

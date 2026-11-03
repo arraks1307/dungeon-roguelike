@@ -25,6 +25,10 @@ public class GameSettings
     public AnimationSpeed Animation { get; set; } = AnimationSpeed.Normal;
     public bool DamageNumbers { get; set; } = true;
     public bool CameraShake { get; set; } = true;
+
+    // Сетевая игра: последние имя и адрес хоста, чтобы не вводить их каждый раз
+    public string PlayerName { get; set; } = "";
+    public string LastAddress { get; set; } = "";
 }
 
 /// <summary>

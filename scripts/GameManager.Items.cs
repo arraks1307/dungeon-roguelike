@@ -115,15 +115,20 @@ public partial class GameManager
     {
         if (_state != GameState.Inventory)
             return;
-        if (PerformHeroAction(_localHero, HeroAction.UseItem(index)))
+        SubmitLocalAction(HeroAction.UseItem(index), spent =>
         {
-            CloseInventory();
-            TryShowLevelUp(); // раунд мог закончиться, пока было открыто окно
-        }
-        else
-        {
-            _inventoryPanel.Refresh(_localHero, index);
-        }
+            if (_state != GameState.Inventory)
+                return; // пока действие шло по сети, окно уже закрыли
+            if (spent)
+            {
+                CloseInventory();
+                TryShowLevelUp(); // раунд мог закончиться, пока было открыто окно
+            }
+            else
+            {
+                _inventoryPanel.Refresh(_localHero, index);
+            }
+        });
     }
 
     /// <summary>Клавиши 1–5: применить предмет из ячейки, не открывая инвентарь.</summary>
@@ -271,23 +276,24 @@ public partial class GameManager
         }
     }
 
-    /// <summary>Выбросить одну штуку предмета под ноги своего героя. Не тратит ход.</summary>
-    private void DropItem(int index)
+    /// <summary>Выбросить одну штуку предмета под ноги героя. Не тратит ход.</summary>
+    private void DropItem(Player hero, int index)
     {
-        var hero = _localHero;
         var inventory = hero.Inventory;
-        if (index < 0 || index >= inventory.Items.Count)
+        if (hero.IsGhost || index < 0 || index >= inventory.Items.Count)
             return;
         if (_floorItems.ContainsKey(hero.GridPos))
         {
-            _hud.AddMessage("Здесь уже что-то лежит.");
+            if (IsLocalHero(hero))
+                _hud.AddMessage("Здесь уже что-то лежит.");
             return;
         }
 
         var item = inventory.TakeOne(index);
         PlaceItem(item, hero.GridPos);
-        _hud.AddMessage($"Ты выбрасываешь: {item.Name}.");
-        _inventoryPanel.Refresh(hero, index);
+        Tell(hero, $"Ты выбрасываешь: {item.Name}.", $"{hero.DisplayName} выбрасывает: {item.Name}.");
+        if (IsLocalHero(hero) && _state == GameState.Inventory)
+            _inventoryPanel.Refresh(hero, index);
         UpdateFov();
         UpdateHud();
     }
@@ -326,43 +332,86 @@ public partial class GameManager
         TryShowLevelUp(); // раунд мог закончиться, пока мы торговали
     }
 
-    private void BuyItem(int index)
+    // Кнопки окна торговца: сама покупка — действие из общего потока (друзья видят тот же товар)
+    private void OnShopBuy(int index)
     {
-        var hero = _localHero;
-        if (_state != GameState.Shop || index < 0 || index >= _merchant.Stock.Count)
+        if (_state == GameState.Shop)
+            SubmitLocalAction(HeroAction.Buy(index, _merchant.Stock.Count));
+    }
+
+    private void OnShopSell(int index)
+    {
+        if (_state == GameState.Shop)
+            SubmitLocalAction(HeroAction.Sell(index));
+    }
+
+    /// <summary>Окно торговца открыто у своего героя — показываем ему результат сделки.</summary>
+    private bool ShopOpenFor(Player hero) => IsLocalHero(hero) && _state == GameState.Shop;
+
+    /// <summary>
+    /// Купить товар. expectedCount — сколько товаров было у торговца, когда покупатель нажал кнопку:
+    /// если за это время друг что-то купил или продал, номера сдвинулись, и покупку отменяем.
+    /// </summary>
+    private void BuyItem(Player hero, int index, int expectedCount)
+    {
+        if (_merchant == null || hero.IsGhost)
             return;
+        bool showing = ShopOpenFor(hero);
+        if (expectedCount != _merchant.Stock.Count || index < 0 || index >= _merchant.Stock.Count)
+        {
+            if (showing)
+            {
+                _shopPanel.ShowStatus("Товары только что изменились — выбери ещё раз.", DamageColor);
+                _shopPanel.Refresh(_merchant.Stock, hero, focusBuy: true, 0);
+            }
+            return;
+        }
 
         var item = _merchant.Stock[index];
         if (hero.Gold < item.Price)
         {
-            _shopPanel.ShowStatus($"Не хватает золота: нужно {item.Price}, у тебя {hero.Gold}.", DamageColor);
+            if (showing)
+                _shopPanel.ShowStatus($"Не хватает золота: нужно {item.Price}, у тебя {hero.Gold}.", DamageColor);
         }
         else if (!hero.Inventory.CanAdd(item))
         {
-            _shopPanel.ShowStatus("Сумка полна — сначала что-нибудь продай.", DamageColor);
+            if (showing)
+                _shopPanel.ShowStatus("Сумка полна — сначала что-нибудь продай.", DamageColor);
         }
         else
         {
             hero.Gold -= item.Price;
             hero.Inventory.TryAdd(item);
             _merchant.Stock.RemoveAt(index);
-            _shopPanel.ShowStatus($"Куплено: {item.Name}.", GoodColor);
+            if (showing)
+                _shopPanel.ShowStatus($"Куплено: {item.Name}.", GoodColor);
+            else
+                _hud.AddMessage($"{hero.DisplayName} покупает у торговца: {item.Name}.");
             _sound.Play(Sound.Pickup);
         }
-        _shopPanel.Refresh(_merchant.Stock, hero, focusBuy: true, index);
+        if (showing)
+            _shopPanel.Refresh(_merchant.Stock, hero, focusBuy: true, index);
+        UpdateHud();
     }
 
-    private void SellItem(int index)
+    private void SellItem(Player hero, int index)
     {
-        var hero = _localHero;
-        if (_state != GameState.Shop || index < 0 || index >= hero.Inventory.Items.Count)
+        if (_merchant == null || hero.IsGhost || index < 0 || index >= hero.Inventory.Items.Count)
             return;
 
         var item = hero.Inventory.TakeOne(index);
         hero.Gold += item.SellPrice;
         _merchant.Stock.Add(item); // проданное можно выкупить обратно по полной цене
-        _shopPanel.ShowStatus($"Продано: {item.Name} (+{item.SellPrice} зол.).", InfoColor);
         _sound.Play(Sound.Pickup);
-        _shopPanel.Refresh(_merchant.Stock, hero, focusBuy: false, index);
+        if (ShopOpenFor(hero))
+        {
+            _shopPanel.ShowStatus($"Продано: {item.Name} (+{item.SellPrice} зол.).", InfoColor);
+            _shopPanel.Refresh(_merchant.Stock, hero, focusBuy: false, index);
+        }
+        else
+        {
+            _hud.AddMessage($"{hero.DisplayName} продаёт торговцу: {item.Name}.");
+        }
+        UpdateHud();
     }
 }
