@@ -70,6 +70,17 @@ public partial class GameManager
                 _testGraphics = arg["--graphics=".Length..] == "low" ? GraphicsQuality.Low : GraphicsQuality.High;
             else if (arg.StartsWith("--party="))
                 _testParty = System.Math.Clamp(int.Parse(arg["--party=".Length..]), 1, MaxPartySize);
+            else if (arg.StartsWith("--party-tune="))
+            {
+                // --party-tune=здоровье,число,урон — прибавки врагам за каждого героя сверх первого
+                var parts = arg["--party-tune=".Length..].Split(',');
+                var culture = System.Globalization.CultureInfo.InvariantCulture;
+                _partyHpPerHero = float.Parse(parts[0], culture);
+                _partyEnemiesPerHero = float.Parse(parts[1], culture);
+                _partyDamagePerHero = float.Parse(parts[2], culture);
+                if (parts.Length > 3)
+                    _partyGrowth = float.Parse(parts[3], culture);
+            }
             else if (arg.StartsWith("--net-host="))
             {
                 _netTestRole = "хост";

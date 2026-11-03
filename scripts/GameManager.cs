@@ -45,7 +45,24 @@ public partial class GameManager : Node3D, IGameWorld
     private const int MapHeight = 32;
     private const int FovRadius = 8;
     private const int ChaseDistance = 20;
-    private const float PartyHpScalePerHero = 0.5f; // +50% здоровья врагам за каждого дополнительного героя
+    // Сила врагов в отряде — за каждого героя сверх первого (подобрано симуляциями, см. --party-tune)
+    private float _partyHpPerHero = 0.6f;      // здоровье врагов: +60%
+    private float _partyEnemiesPerHero = 0.3f; // число врагов на этаже: +30%
+    private float _partyDamagePerHero = 0.1f;  // урон врагов: +10%
+    private float _partyGrowth = 0.2f;         // насколько каждый следующий герой «весит» больше предыдущего
+
+    /// <summary>
+    /// «Вес» героев сверх первого. Выгода отряда растёт быстрее числа героев (больше урона,
+    /// опыт — всем), поэтому вес нарастающий: при _partyGrowth = 0.2 это 1 / 2.4 / 4.2 для 2 / 3 / 4 героев.
+    /// </summary>
+    private float ExtraHeroWeight
+    {
+        get
+        {
+            int extra = _heroes.Count - 1;
+            return extra + _partyGrowth * extra * (extra - 1);
+        }
+    }
 
     private static readonly Color DamageColor = new(1f, 0.45f, 0.4f);
     private static readonly Color GoodColor = new(0.5f, 1f, 0.5f);
@@ -630,6 +647,7 @@ public partial class GameManager : Node3D, IGameWorld
         _camera.SnapToTarget();
 
         int enemyCount = Math.Min(2 + _floor * 3 / 2, 22); // подобрано по симуляциям
+        enemyCount = (int)MathF.Round(enemyCount * (1f + _partyEnemiesPerHero * ExtraHeroWeight));
         SpawnEnemies(bossFloor ? enemyCount / 2 : enemyCount);
         SpawnChests();
         SpawnItems(_rng.Next(3, 6) + _difficulty.ItemsPerFloor + (_heroes.Count - 1));
@@ -955,17 +973,22 @@ public partial class GameManager : Node3D, IGameWorld
         _sound.Play(Sound.Kill);
 
         // Опыт — раньше проверки босса: иначе экран победы показал бы уровень без опыта за финального босса
+        bool anyLevelUp = false;
         foreach (var hero in LivingHeroes)
         {
             int levels = hero.GainExperience(enemy.ExperienceReward);
             if (levels == 0)
                 continue;
             hero.PendingLevelUps += levels; // окно выбора улучшения покажем в конце раунда
+            anyLevelUp = true;
             Tell(hero, $"Новый уровень: {hero.Level}!", $"{hero.DisplayName}: новый уровень {hero.Level}.", InfoColor);
-            Effects.FloatingText(this, hero.GridPos, "Уровень!", InfoColor);
             Effects.Burst(this, hero.GridPos, InfoColor, 24);
-            _sound.Play(Sound.LevelUp);
+            // Надпись — только над своим героем: в отряде уровень часто растёт у всех сразу, и надписи слипались
+            if (IsLocalHero(hero))
+                Effects.FloatingText(this, hero.GridPos, "Уровень!", InfoColor);
         }
+        if (anyLevelUp)
+            _sound.Play(Sound.LevelUp);
 
         if (enemy == _boss)
             OnBossKilled(enemy);
@@ -1034,8 +1057,8 @@ public partial class GameManager : Node3D, IGameWorld
     private Enemy SpawnEnemy(EnemyType type, Vector2I cell)
     {
         var enemy = new Enemy();
-        float partyScale = 1f + PartyHpScalePerHero * (_heroes.Count - 1);
-        enemy.Setup(type, _floor, _difficulty, partyScale);
+        float weight = ExtraHeroWeight;
+        enemy.Setup(type, _floor, _difficulty, 1f + _partyHpPerHero * weight, 1f + _partyDamagePerHero * weight);
         AddChild(enemy);
         enemy.Teleport(cell);
         enemy.Visible = _visible.Contains(cell);
@@ -1100,6 +1123,8 @@ public partial class GameManager : Node3D, IGameWorld
     {
         _hud.UpdateStats(_localHero, _floor, _kills);
         _hud.UpdateParty(_heroes, _localHero);
+        foreach (var hero in _heroes)
+            hero.UpdateNameplate(!IsSinglePlayer && !IsLocalHero(hero));
         _hud.SetWaiting(_localHero.HasActed && !_gameOver ? WaitingFor() : null);
         _hud.UpdateBoss(_boss);
     }

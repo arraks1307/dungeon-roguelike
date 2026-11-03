@@ -55,6 +55,44 @@ public partial class Player : Actor
 
     public void SetDisplayName(string name) => DisplayName = name;
 
+    private Label3D _nameplate;
+
+    /// <summary>
+    /// Табличка с именем над героем — для союзников в отряде. Label3D — текст в 3D-мире;
+    /// Billboard поворачивает его к камере, NoDepthTest не даёт стенам его закрывать.
+    /// Сходивший в этом раунде союзник подписан бледнее — видно, кого ждём.
+    /// </summary>
+    public void UpdateNameplate(bool show)
+    {
+        if (!show)
+        {
+            if (_nameplate != null)
+                _nameplate.Visible = false;
+            return;
+        }
+        _nameplate ??= CreateNameplate();
+        _nameplate.Visible = true;
+        _nameplate.Text = IsGhost ? $"{DisplayName} (призрак)" : DisplayName;
+        var color = IsGhost ? new Color(GhostColor, 0.8f) : Class.Color.Lightened(0.45f);
+        _nameplate.Modulate = HasActed && !IsGhost ? new Color(color, 0.45f) : color;
+    }
+
+    private Label3D CreateNameplate()
+    {
+        var label = new Label3D
+        {
+            Position = new Vector3(0f, 1.35f, 0f),
+            Billboard = BaseMaterial3D.BillboardModeEnum.Enabled,
+            NoDepthTest = true,
+            FontSize = 40,
+            PixelSize = 0.006f,
+            OutlineSize = 12,
+            OutlineModulate = new Color(0f, 0f, 0f, 0.8f),
+        };
+        AddChild(label);
+        return label;
+    }
+
     /// <summary>Отряд спустился на новый этаж — призрак оживает с половиной здоровья.</summary>
     public void Revive()
     {
@@ -133,7 +171,9 @@ public partial class Player : Actor
     /// <summary>На низком качестве — без теней от факела и без пылинок.</summary>
     public void SetHighQuality(bool high)
     {
-        _torchLight.ShadowEnabled = high;
+        // Тени от точечного света дорогие (их рендер — шесть направлений сразу), поэтому
+        // тени даёт только факел своего героя; факелы союзников просто светят
+        _torchLight.ShadowEnabled = high && IsLocal;
         // Пылинки — только вокруг своего героя, иначе вчетвером их было бы слишком много
         _dust.Emitting = high && IsLocal;
         _dust.Visible = high && IsLocal;

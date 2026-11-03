@@ -195,7 +195,10 @@ public partial class Hud : CanvasLayer
 
     public void UpdateStats(Player player, int floor, int kills)
     {
-        _classLabel.Text = $"{player.Class.Name}  •  уровень {player.Level}";
+        // В отряде у героя есть имя игрока — показываем его рядом с классом
+        _classLabel.Text = player.DisplayName == player.Class.Name
+            ? $"{player.Class.Name}  •  уровень {player.Level}"
+            : $"{player.DisplayName}  •  {player.Class.Name}  •  уровень {player.Level}";
         _classLabel.AddThemeColorOverride("font_color", player.Class.Color.Lightened(0.35f));
 
         _hpLabel.Text = $"Здоровье  {player.Hp} / {player.MaxHp}";

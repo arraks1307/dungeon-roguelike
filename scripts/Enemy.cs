@@ -128,14 +128,14 @@ public partial class Enemy : Actor
     /// partyHpScale — множитель здоровья для отряда из нескольких героев: вчетвером
     /// бить врагов проще, поэтому они крепче (урон не растёт — иначе одиночки погибали бы мгновенно).
     /// </summary>
-    public void Setup(EnemyType type, int floor, DifficultyDef difficulty, float partyHpScale = 1f)
+    public void Setup(EnemyType type, int floor, DifficultyDef difficulty, float partyHpScale = 1f, float partyDamageScale = 1f)
     {
         Type = type;
         DisplayName = type.Name;
         // С каждым этажом враги немного крепче, а сложность и размер отряда умножают здоровье
         MaxHp = Mathf.RoundToInt((type.Hp + (floor - 1) * HpPerFloor) * difficulty.EnemyHp * partyHpScale);
         Hp = MaxHp;
-        Attack = Math.Max(1, Mathf.RoundToInt((type.Attack + (floor - 1) / AttackFloorStep) * difficulty.EnemyDamage));
+        Attack = Math.Max(1, Mathf.RoundToInt((type.Attack + (floor - 1) / AttackFloorStep) * difficulty.EnemyDamage * partyDamageScale));
         Defense = type.Defense;
 
         if (IsBoss)
