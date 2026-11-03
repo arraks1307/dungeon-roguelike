@@ -52,8 +52,8 @@ public partial class GameManager
         }
     }
 
-    /// <summary>Игрок наступил на клетку — если там ловушка, она срабатывает.</summary>
-    private void CheckTrap(Vector2I cell)
+    /// <summary>Герой наступил на клетку — если там ловушка, она срабатывает.</summary>
+    private void CheckTrap(Player hero, Vector2I cell)
     {
         if (!_map.Traps.TryGetValue(cell, out var trap))
             return;
@@ -63,16 +63,17 @@ public partial class GameManager
         {
             case TrapKind.Spikes:
                 int damage = 2 + _floor / 2;
-                _player.TakeDamage(damage);
+                hero.TakeDamage(damage);
                 if (_godMode)
-                    _player.Heal(damage);
+                    hero.Heal(damage);
                 Effects.FloatingText(this, cell, $"-{damage}", DamageColor);
                 Effects.Burst(this, cell, new Color(0.8f, 0.8f, 0.85f), 10);
                 _sound.Play(Sound.Hurt);
-                _camera.Shake(0.15f);
-                _hud.AddMessage($"Из пола выскакивают шипы! -{damage}.", DamageColor);
-                if (_player.IsDead)
-                    GameOver("ловушка с шипами");
+                if (IsLocalHero(hero))
+                    _camera.Shake(0.15f);
+                Tell(hero, $"Из пола выскакивают шипы! -{damage}.", $"{hero.DisplayName} наступает на шипы: -{damage}.", DamageColor);
+                if (hero.IsDead)
+                    OnHeroDied(hero, "ловушка с шипами");
                 break;
 
             case TrapKind.Alarm:
@@ -80,7 +81,7 @@ public partial class GameManager
                 foreach (var enemy in _enemies)
                     enemy.Alerted = true;
                 _sound.Play(Sound.Summon);
-                _hud.AddMessage("Ловушка-сирена! Все враги этажа знают, где ты.", DamageColor);
+                _hud.AddMessage("Ловушка-сирена! Все враги этажа знают, где отряд.", DamageColor);
                 break;
 
             case TrapKind.Teleport:
@@ -88,32 +89,36 @@ public partial class GameManager
                 if (TryFindFreeCell(out var destination, includeStartRoom: true))
                 {
                     Effects.Burst(this, cell, new Color(0.4f, 0.6f, 1f), 20);
-                    _player.Teleport(destination);
-                    _camera.SnapToTarget();
+                    hero.Teleport(destination);
+                    if (IsLocalHero(hero))
+                        _camera.SnapToTarget();
                     _sound.Play(Sound.Teleport);
-                    _hud.AddMessage("Руна телепорта уносит тебя неизвестно куда!", InfoColor);
-                    TryPickUpItem(destination);
+                    Tell(hero, "Руна телепорта уносит тебя неизвестно куда!", $"Руна телепорта уносит героя: {hero.DisplayName}.", InfoColor);
+                    TryPickUpItem(hero, destination);
                 }
                 break;
         }
     }
 
     /// <summary>
-    /// В конце хода игрок осматривается: с некоторым шансом замечает ловушки
+    /// В конце раунда каждый живой герой осматривается: с некоторым шансом замечает ловушки
     /// и потайные двери в соседних клетках.
     /// </summary>
     private void SearchSurroundings()
     {
-        foreach (var direction in DungeonMap.Directions)
+        foreach (var hero in LivingHeroes)
         {
-            var cell = _player.GridPos + direction;
-            if (_map.Traps.TryGetValue(cell, out var trap) && !trap.Revealed && _rng.NextDouble() < TrapSpotChance)
+            foreach (var direction in DungeonMap.Directions)
             {
-                trap.Revealed = true;
-                _hud.AddMessage("Ты замечаешь ловушку.", InfoColor);
+                var cell = hero.GridPos + direction;
+                if (_map.Traps.TryGetValue(cell, out var trap) && !trap.Revealed && _rng.NextDouble() < TrapSpotChance)
+                {
+                    trap.Revealed = true;
+                    Tell(hero, "Ты замечаешь ловушку.", $"{hero.DisplayName} замечает ловушку.", InfoColor);
+                }
+                if (_map.Get(cell) == Tile.SecretDoor && _rng.NextDouble() < SecretSpotChance)
+                    RevealSecretDoor(cell);
             }
-            if (_map.Get(cell) == Tile.SecretDoor && _rng.NextDouble() < SecretSpotChance)
-                RevealSecretDoor(cell);
         }
     }
 
@@ -159,7 +164,7 @@ public partial class GameManager
     }
 
     /// <summary>Шагнули в сундук: либо добыча, либо зубастый сюрприз. Тратит ход.</summary>
-    private void OpenChest(Chest chest)
+    private void OpenChest(Player hero, Chest chest)
     {
         _chests.Remove(chest.GridPos);
         chest.QueueFree();
@@ -179,9 +184,9 @@ public partial class GameManager
 
         int bonusFloors = chest.IsSecret ? 3 : 1;
         int gold = (chest.IsSecret ? 30 : 10) + _floor * 3;
-        _player.Gold += gold;
+        hero.Gold += gold;
         Effects.FloatingText(this, chest.GridPos, $"+{gold} зол.", InfoColor);
-        _hud.AddMessage($"В сундуке {gold} золота и добыча!", InfoColor);
+        Tell(hero, $"В сундуке {gold} золота и добыча!", $"{hero.DisplayName} открывает сундук: {gold} золота и добыча.", InfoColor);
 
         // Первая вещь ложится на место сундука, вторая (в секретном сундуке) — в соседнюю свободную клетку
         PlaceItem(ItemCatalog.Roll(_rng, _floor + bonusFloors), chest.GridPos);

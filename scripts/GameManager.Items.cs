@@ -8,6 +8,7 @@ namespace Roguelike;
 /// <summary>
 /// Часть GameManager про предметы: подбор, применение, выбрасывание, золото и торговец.
 /// partial означает, что это тот же класс, просто описанный в нескольких файлах.
+/// Подбирает и применяет предметы конкретный герой; окна инвентаря и магазина — у своего героя.
 /// </summary>
 public partial class GameManager
 {
@@ -64,24 +65,25 @@ public partial class GameManager
         }
     }
 
-    private void TryPickUpItem(Vector2I cell)
+    private void TryPickUpItem(Player hero, Vector2I cell)
     {
         if (!_floorItems.TryGetValue(cell, out var pickup))
             return;
 
         if (pickup.Item == null)
         {
-            _player.Gold += pickup.Gold;
-            _hud.AddMessage($"Ты подбираешь {pickup.Gold} золота.", InfoColor);
+            hero.Gold += pickup.Gold;
+            Tell(hero, $"Ты подбираешь {pickup.Gold} золота.", $"{hero.DisplayName} подбирает {pickup.Gold} золота.", InfoColor);
             Effects.FloatingText(this, cell, $"+{pickup.Gold} зол.", InfoColor);
         }
-        else if (_player.Inventory.TryAdd(pickup.Item))
+        else if (hero.Inventory.TryAdd(pickup.Item))
         {
-            _hud.AddMessage($"Ты подбираешь: {pickup.Item.Name}.", pickup.Item.RarityColor);
+            Tell(hero, $"Ты подбираешь: {pickup.Item.Name}.", $"{hero.DisplayName} подбирает: {pickup.Item.Name}.", pickup.Item.RarityColor);
         }
         else
         {
-            _hud.AddMessage($"Здесь лежит: {pickup.Item.Name}. Но сумка полна!", DamageColor);
+            if (IsLocalHero(hero))
+                _hud.AddMessage($"Здесь лежит: {pickup.Item.Name}. Но сумка полна!", DamageColor);
             return;
         }
 
@@ -90,14 +92,14 @@ public partial class GameManager
         _sound.Play(Sound.Pickup);
     }
 
-    // ---------- Инвентарь ----------
+    // ---------- Инвентарь (окно своего героя) ----------
 
     // Пока открыто окно, HUD прячем: иначе журнал и статистика просвечивают сквозь окно
     private void OpenInventory()
     {
         _state = GameState.Inventory;
         _hud.Visible = false;
-        _inventoryPanel.Open(_player);
+        _inventoryPanel.Open(_localHero);
     }
 
     private void CloseInventory()
@@ -113,45 +115,42 @@ public partial class GameManager
     {
         if (_state != GameState.Inventory)
             return;
-        if (UseItem(index))
+        if (PerformHeroAction(_localHero, HeroAction.UseItem(index)))
         {
             CloseInventory();
-            EndPlayerTurn();
+            TryShowLevelUp(); // раунд мог закончиться, пока было открыто окно
         }
         else
         {
-            _inventoryPanel.Refresh(_player, index);
+            _inventoryPanel.Refresh(_localHero, index);
         }
     }
 
     /// <summary>Клавиши 1–5: применить предмет из ячейки, не открывая инвентарь.</summary>
     private void QuickUse(int index)
     {
-        if (index >= _player.Inventory.Items.Count)
-            return;
-        if (UseItem(index))
-            EndPlayerTurn();
-        else
-            UpdateHud();
+        if (index < _localHero.Inventory.Items.Count)
+            PerformLocalAction(HeroAction.UseItem(index));
     }
 
     /// <summary>
-    /// Применить или надеть предмет из сумки.
+    /// Применить или надеть предмет из сумки героя.
     /// Возвращает true, если действие состоялось и тратит ход.
     /// </summary>
-    private bool UseItem(int index)
+    private bool UseItem(Player hero, int index)
     {
-        var inventory = _player.Inventory;
+        var inventory = hero.Inventory;
         if (index < 0 || index >= inventory.Items.Count)
             return false;
 
         var item = inventory.Items[index];
         int power = item.Template.Power;
+        bool local = IsLocalHero(hero);
 
         if (item.IsEquipment)
         {
-            _player.Equip(index);
-            _hud.AddMessage($"Ты экипируешь: {item.Name}.", item.RarityColor);
+            hero.Equip(index);
+            Tell(hero, $"Ты экипируешь: {item.Name}.", $"{hero.DisplayName} экипирует: {item.Name}.", item.RarityColor);
             _sound.Play(Sound.Equip);
             return true;
         }
@@ -159,31 +158,34 @@ public partial class GameManager
         switch (item.Kind)
         {
             case ItemKind.HealthPotion:
-                if (!_player.IsHurt)
+                if (!hero.IsHurt)
                 {
-                    _hud.AddMessage("Ты и так полностью здоров.");
+                    if (local)
+                        _hud.AddMessage("Ты и так полностью здоров.");
                     return false;
                 }
                 inventory.TakeOne(index);
-                _player.Heal(power);
-                _hud.AddMessage($"Ты выпиваешь {item.Name}: +{power} здоровья.", GoodColor);
-                Effects.FloatingText(this, _player.GridPos, $"+{power}", GoodColor);
-                Effects.Burst(this, _player.GridPos, GoodColor, 12);
+                hero.Heal(power);
+                Tell(hero, $"Ты выпиваешь {item.Name}: +{power} здоровья.", $"{hero.DisplayName} выпивает {item.Name}.", GoodColor);
+                Effects.FloatingText(this, hero.GridPos, $"+{power}", GoodColor);
+                Effects.Burst(this, hero.GridPos, GoodColor, 12);
                 _sound.Play(Sound.Heal);
                 return true;
 
             case ItemKind.StrengthPotion:
                 inventory.TakeOne(index);
-                _player.ApplyStrength(power);
-                _hud.AddMessage($"Мышцы наливаются силой: +{power} к атаке на {ItemCatalog.BuffDuration} ходов.", InfoColor);
-                Effects.Burst(this, _player.GridPos, item.Color, 16);
+                hero.ApplyStrength(power);
+                Tell(hero, $"Мышцы наливаются силой: +{power} к атаке на {ItemCatalog.BuffDuration} ходов.",
+                    $"{hero.DisplayName} выпивает зелье силы.", InfoColor);
+                Effects.Burst(this, hero.GridPos, item.Color, 16);
                 _sound.Play(Sound.LevelUp);
                 return true;
 
             case ItemKind.InvisibilityPotion:
                 inventory.TakeOne(index);
-                _player.ApplyInvisibility(power);
-                _hud.AddMessage($"Ты становишься невидимым на {power} ходов. Атака раскроет тебя.", InfoColor);
+                hero.ApplyInvisibility(power);
+                Tell(hero, $"Ты становишься невидимым на {power} ходов. Атака раскроет тебя.",
+                    $"{hero.DisplayName} исчезает из виду.", InfoColor);
                 _sound.Play(Sound.Teleport);
                 return true;
 
@@ -191,13 +193,14 @@ public partial class GameManager
                 if (!TryFindFreeCell(out var destination, includeStartRoom: true))
                     return false;
                 inventory.TakeOne(index);
-                Effects.Burst(this, _player.GridPos, item.Color, 20);
-                _player.Teleport(destination);
+                Effects.Burst(this, hero.GridPos, item.Color, 20);
+                hero.Teleport(destination);
                 Effects.Burst(this, destination, item.Color, 20);
-                _camera.SnapToTarget();
-                _hud.AddMessage("Вспышка — и ты в другом месте!", InfoColor);
+                if (local)
+                    _camera.SnapToTarget();
+                Tell(hero, "Вспышка — и ты в другом месте!", $"{hero.DisplayName} исчезает во вспышке телепорта.", InfoColor);
                 _sound.Play(Sound.Teleport);
-                TryPickUpItem(destination);
+                TryPickUpItem(hero, destination);
                 return true;
 
             case ItemKind.FireScroll:
@@ -205,7 +208,8 @@ public partial class GameManager
                 var targets = _enemies.Where(enemy => _visible.Contains(enemy.GridPos)).ToList();
                 if (targets.Count == 0)
                 {
-                    _hud.AddMessage("Рядом нет врагов — свиток лучше поберечь.");
+                    if (local)
+                        _hud.AddMessage("Рядом нет врагов — свиток лучше поберечь.");
                     return false;
                 }
                 inventory.TakeOne(index);
@@ -216,14 +220,15 @@ public partial class GameManager
                 return true;
 
             case ItemKind.Bomb:
-                var nearby = _enemies.Where(enemy => ChebyshevDistance(enemy.GridPos, _player.GridPos) <= BombRadius).ToList();
+                var nearby = _enemies.Where(enemy => ChebyshevDistance(enemy.GridPos, hero.GridPos) <= BombRadius).ToList();
                 if (nearby.Count == 0)
                 {
-                    _hud.AddMessage("Рядом нет врагов — бомбу лучше поберечь.");
+                    if (local)
+                        _hud.AddMessage("Рядом нет врагов — бомбу лучше поберечь.");
                     return false;
                 }
                 inventory.TakeOne(index);
-                Effects.Burst(this, _player.GridPos, new Color(1f, 0.6f, 0.2f), 50);
+                Effects.Burst(this, hero.GridPos, new Color(1f, 0.6f, 0.2f), 50);
                 DamageEnemies(nearby, power + _floor, new Color(1f, 0.6f, 0.2f), "Взрыв!");
                 return true;
 
@@ -233,7 +238,7 @@ public partial class GameManager
                     for (int y = 0; y < _map.Height; y++)
                         _map.Explored[x, y] = true;
                 RevealAllSecrets();
-                _hud.AddMessage("Карта этажа открывается перед тобой — со всеми ловушками и тайниками.", InfoColor);
+                _hud.AddMessage("Карта этажа открывается — со всеми ловушками и тайниками.", InfoColor);
                 _sound.Play(Sound.Pickup);
                 return true;
         }
@@ -266,29 +271,28 @@ public partial class GameManager
         }
     }
 
-    /// <summary>Выбросить одну штуку предмета под ноги. Не тратит ход.</summary>
+    /// <summary>Выбросить одну штуку предмета под ноги своего героя. Не тратит ход.</summary>
     private void DropItem(int index)
     {
-        var inventory = _player.Inventory;
+        var hero = _localHero;
+        var inventory = hero.Inventory;
         if (index < 0 || index >= inventory.Items.Count)
             return;
-        if (_floorItems.ContainsKey(_player.GridPos))
+        if (_floorItems.ContainsKey(hero.GridPos))
         {
             _hud.AddMessage("Здесь уже что-то лежит.");
             return;
         }
 
         var item = inventory.TakeOne(index);
-        PlaceItem(item, _player.GridPos);
+        PlaceItem(item, hero.GridPos);
         _hud.AddMessage($"Ты выбрасываешь: {item.Name}.");
-        _inventoryPanel.Refresh(_player, index);
+        _inventoryPanel.Refresh(hero, index);
         UpdateFov();
         UpdateHud();
     }
 
-    private static int ChebyshevDistance(Vector2I a, Vector2I b) => Math.Max(Math.Abs(a.X - b.X), Math.Abs(a.Y - b.Y));
-
-    // ---------- Торговец ----------
+    // ---------- Торговец (окно своего героя) ----------
 
     /// <summary>Торговец бывает со 2-го этажа: всегда сразу после босса, иначе — с шансом.</summary>
     private bool ShouldSpawnMerchant() =>
@@ -309,7 +313,7 @@ public partial class GameManager
     {
         _state = GameState.Shop;
         _hud.Visible = false;
-        _shopPanel.Open(_merchant.Stock, _player);
+        _shopPanel.Open(_merchant.Stock, _localHero);
         _sound.Play(Sound.Pickup);
     }
 
@@ -319,43 +323,46 @@ public partial class GameManager
         _shopPanel.Visible = false;
         _hud.Visible = true;
         UpdateHud();
+        TryShowLevelUp(); // раунд мог закончиться, пока мы торговали
     }
 
     private void BuyItem(int index)
     {
+        var hero = _localHero;
         if (_state != GameState.Shop || index < 0 || index >= _merchant.Stock.Count)
             return;
 
         var item = _merchant.Stock[index];
-        if (_player.Gold < item.Price)
+        if (hero.Gold < item.Price)
         {
-            _shopPanel.ShowStatus($"Не хватает золота: нужно {item.Price}, у тебя {_player.Gold}.", DamageColor);
+            _shopPanel.ShowStatus($"Не хватает золота: нужно {item.Price}, у тебя {hero.Gold}.", DamageColor);
         }
-        else if (!_player.Inventory.CanAdd(item))
+        else if (!hero.Inventory.CanAdd(item))
         {
             _shopPanel.ShowStatus("Сумка полна — сначала что-нибудь продай.", DamageColor);
         }
         else
         {
-            _player.Gold -= item.Price;
-            _player.Inventory.TryAdd(item);
+            hero.Gold -= item.Price;
+            hero.Inventory.TryAdd(item);
             _merchant.Stock.RemoveAt(index);
             _shopPanel.ShowStatus($"Куплено: {item.Name}.", GoodColor);
             _sound.Play(Sound.Pickup);
         }
-        _shopPanel.Refresh(_merchant.Stock, _player, focusBuy: true, index);
+        _shopPanel.Refresh(_merchant.Stock, hero, focusBuy: true, index);
     }
 
     private void SellItem(int index)
     {
-        if (_state != GameState.Shop || index < 0 || index >= _player.Inventory.Items.Count)
+        var hero = _localHero;
+        if (_state != GameState.Shop || index < 0 || index >= hero.Inventory.Items.Count)
             return;
 
-        var item = _player.Inventory.TakeOne(index);
-        _player.Gold += item.SellPrice;
+        var item = hero.Inventory.TakeOne(index);
+        hero.Gold += item.SellPrice;
         _merchant.Stock.Add(item); // проданное можно выкупить обратно по полной цене
         _shopPanel.ShowStatus($"Продано: {item.Name} (+{item.SellPrice} зол.).", InfoColor);
         _sound.Play(Sound.Pickup);
-        _shopPanel.Refresh(_merchant.Stock, _player, focusBuy: false, index);
+        _shopPanel.Refresh(_merchant.Stock, hero, focusBuy: false, index);
     }
 }

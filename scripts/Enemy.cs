@@ -124,12 +124,16 @@ public partial class Enemy : Actor
             Freeze(save.Frozen);
     }
 
-    public void Setup(EnemyType type, int floor, DifficultyDef difficulty)
+    /// <summary>
+    /// partyHpScale — множитель здоровья для отряда из нескольких героев: вчетвером
+    /// бить врагов проще, поэтому они крепче (урон не растёт — иначе одиночки погибали бы мгновенно).
+    /// </summary>
+    public void Setup(EnemyType type, int floor, DifficultyDef difficulty, float partyHpScale = 1f)
     {
         Type = type;
         DisplayName = type.Name;
-        // С каждым этажом враги немного крепче, а сложность умножает здоровье и урон
-        MaxHp = Mathf.RoundToInt((type.Hp + (floor - 1) * HpPerFloor) * difficulty.EnemyHp);
+        // С каждым этажом враги немного крепче, а сложность и размер отряда умножают здоровье
+        MaxHp = Mathf.RoundToInt((type.Hp + (floor - 1) * HpPerFloor) * difficulty.EnemyHp * partyHpScale);
         Hp = MaxHp;
         Attack = Math.Max(1, Mathf.RoundToInt((type.Attack + (floor - 1) / AttackFloorStep) * difficulty.EnemyDamage));
         Defense = type.Defense;
@@ -258,17 +262,19 @@ public partial class Enemy : Actor
             return;
         }
 
-        if (world.PlayerInvisible)
+        // Цель — ближайший живой герой, которого не скрывает невидимость
+        var target = world.NearestTarget(GridPos);
+        if (target == null)
         {
-            Alerted = false; // теряет игрока из виду и стоит на месте
+            Alerted = false; // некого преследовать — теряет след и стоит на месте
             return;
         }
 
-        int stepsToPlayer = StepsBetween(GridPos, world.PlayerPos);
+        int stepsToTarget = StepsBetween(GridPos, target.GridPos);
         if (world.IsVisibleToPlayer(GridPos))
             Alerted = true;
-        if (Type.Behavior == EnemyBehavior.Ghost && stepsToPlayer <= GhostSenseRadius)
-            Alerted = true; // призрак чувствует игрока сквозь стены
+        if (Type.Behavior == EnemyBehavior.Ghost && stepsToTarget <= GhostSenseRadius)
+            Alerted = true; // призрак чувствует героев сквозь стены
 
         if (!Alerted || !ShouldActThisTurn())
             return;
@@ -277,10 +283,10 @@ public partial class Enemy : Actor
         switch (Type.Behavior)
         {
             case EnemyBehavior.Archer:
-                ArcherTurn(world, stepsToPlayer);
+                ArcherTurn(world, target, stepsToTarget);
                 break;
             case EnemyBehavior.Ghost:
-                GhostTurn(world, stepsToPlayer);
+                GhostTurn(world, target, stepsToTarget);
                 break;
             case EnemyBehavior.Boss when _turnsTaken % BossSummonInterval == 0:
                 world.SummonMinions(this, 2, null);
@@ -289,13 +295,13 @@ public partial class Enemy : Actor
                 world.SummonMinions(this, 2, Skeleton);
                 break;
             case EnemyBehavior.Necromancer:
-                ArcherTurn(world, stepsToPlayer); // в остальное время ведёт себя как лучник
+                ArcherTurn(world, target, stepsToTarget); // в остальное время ведёт себя как лучник
                 break;
             case EnemyBehavior.Overlord:
-                OverlordTurn(world, stepsToPlayer);
+                OverlordTurn(world, target, stepsToTarget);
                 break;
             default:
-                MeleeTurn(world);
+                MeleeTurn(world, target);
                 break;
         }
     }
@@ -306,7 +312,7 @@ public partial class Enemy : Actor
     /// Финальный босс. Первая фаза: ближний бой, огненные залпы через ход, призыв раз в 6 ходов.
     /// Вторая фаза (меньше половины здоровья): +3 к атаке и призыв раз в 3 хода.
     /// </summary>
-    private void OverlordTurn(IGameWorld world, int stepsToPlayer)
+    private void OverlordTurn(IGameWorld world, Player target, int stepsToTarget)
     {
         if (IsEnraged && !_enraged)
         {
@@ -321,19 +327,19 @@ public partial class Enemy : Actor
             world.SummonMinions(this, 2, _turnsTaken % 2 == 0 ? Skeleton : Array.Find(Types, t => t.Name == "Орк"));
             return;
         }
-        if (stepsToPlayer is >= 2 and <= 5 && world.IsVisibleToPlayer(GridPos) && _turnsTaken % 2 == 0)
+        if (stepsToTarget is >= 2 and <= 5 && world.IsVisibleToPlayer(GridPos) && _turnsTaken % 2 == 0)
         {
-            world.EnemyAttacksPlayer(this, ranged: true);
+            world.EnemyAttacksPlayer(this, target, ranged: true);
             return;
         }
-        MeleeTurn(world);
+        MeleeTurn(world, target);
     }
 
-    private void MeleeTurn(IGameWorld world)
+    private void MeleeTurn(IGameWorld world, Player target)
     {
-        if (world.Map.AreAdjacent(GridPos, world.PlayerPos))
+        if (world.Map.AreAdjacent(GridPos, target.GridPos))
         {
-            world.EnemyAttacksPlayer(this, ranged: false);
+            world.EnemyAttacksPlayer(this, target, ranged: false);
             return;
         }
         var step = ChooseStep(world.PlayerDistances, cell => world.Map.CanMove(GridPos, cell) && !world.IsOccupied(cell));
@@ -346,61 +352,61 @@ public partial class Enemy : Actor
             MoveTo(step.Value);
     }
 
-    private void ArcherTurn(IGameWorld world, int stepsToPlayer)
+    private void ArcherTurn(IGameWorld world, Player target, int stepsToTarget)
     {
-        bool canSeePlayer = world.IsVisibleToPlayer(GridPos);
+        bool canSeeTarget = world.IsVisibleToPlayer(GridPos);
 
-        if (canSeePlayer && stepsToPlayer == 1)
+        if (canSeeTarget && stepsToTarget == 1)
         {
-            // Игрок вплотную: пытаемся отступить, а если некуда — бьём луком в ближнем бою
-            var retreat = FindRetreatStep(world);
+            // Герой вплотную: пытаемся отступить, а если некуда — бьём луком в ближнем бою
+            var retreat = FindRetreatStep(world, target);
             if (retreat.HasValue)
                 MoveTo(retreat.Value);
             else
-                world.EnemyAttacksPlayer(this, ranged: false);
+                world.EnemyAttacksPlayer(this, target, ranged: false);
             return;
         }
 
-        if (canSeePlayer && stepsToPlayer <= ArcherRange)
+        if (canSeeTarget && stepsToTarget <= ArcherRange)
         {
-            world.EnemyAttacksPlayer(this, ranged: true);
+            world.EnemyAttacksPlayer(this, target, ranged: true);
             return;
         }
 
-        MeleeTurn(world); // не видит или далеко — подходит ближе
+        MeleeTurn(world, target); // не видит или далеко — подходит ближе
     }
 
-    private Vector2I? FindRetreatStep(IGameWorld world)
+    private Vector2I? FindRetreatStep(IGameWorld world, Player target)
     {
         foreach (var direction in DungeonMap.Directions)
         {
             var next = GridPos + direction;
-            if (StepsBetween(next, world.PlayerPos) > 1 && world.Map.CanMove(GridPos, next) && !world.IsOccupied(next))
+            if (StepsBetween(next, target.GridPos) > 1 && world.Map.CanMove(GridPos, next) && !world.IsOccupied(next))
                 return next;
         }
         return null;
     }
 
     /// <summary>
-    /// Призрак летит напрямую к игроку сквозь стены. Атаковать он может только
-    /// из клетки пола — иначе игрок не смог бы ударить его в ответ.
+    /// Призрак летит напрямую к цели сквозь стены. Атаковать он может только
+    /// из клетки пола — иначе герой не смог бы ударить его в ответ.
     /// </summary>
-    private void GhostTurn(IGameWorld world, int stepsToPlayer)
+    private void GhostTurn(IGameWorld world, Player target, int stepsToTarget)
     {
-        if (stepsToPlayer == 1 && world.Map.IsWalkable(GridPos))
+        if (stepsToTarget == 1 && world.Map.IsWalkable(GridPos))
         {
-            world.EnemyAttacksPlayer(this, ranged: false);
+            world.EnemyAttacksPlayer(this, target, ranged: false);
             return;
         }
 
-        int bestScore = GhostScore(world, GridPos);
+        int bestScore = GhostScore(world, target, GridPos);
         Vector2I? best = null;
         foreach (var direction in DungeonMap.Directions)
         {
             var next = GridPos + direction;
             if (!world.Map.InBounds(next) || world.IsOccupied(next))
                 continue;
-            int score = GhostScore(world, next);
+            int score = GhostScore(world, target, next);
             if (score < bestScore)
             {
                 bestScore = score;
@@ -411,9 +417,9 @@ public partial class Enemy : Actor
             MoveTo(best.Value);
     }
 
-    // Чем меньше, тем лучше: главное — расстояние до игрока, при равенстве лучше клетка пола, а не стена
-    private static int GhostScore(IGameWorld world, Vector2I cell) =>
-        StepsBetween(cell, world.PlayerPos) * 2 + (world.Map.IsWalkable(cell) ? 0 : 1);
+    // Чем меньше, тем лучше: главное — расстояние до цели, при равенстве лучше клетка пола, а не стена
+    private static int GhostScore(IGameWorld world, Player target, Vector2I cell) =>
+        StepsBetween(cell, target.GridPos) * 2 + (world.Map.IsWalkable(cell) ? 0 : 1);
 
     /// <summary>
     /// Выбираем соседнюю клетку, которая ближе к игроку по полю расстояний.

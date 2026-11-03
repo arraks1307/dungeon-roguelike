@@ -33,6 +33,35 @@ public partial class Player : Actor
     private double _holdTimer;
     private bool _walkStopped;
 
+    // ----- Участник отряда -----
+
+    /// <summary>Номер героя в отряде (0 — хост или одиночный игрок). По нему же сеть узнаёт, чей это герой.</summary>
+    public int Id { get; set; }
+
+    /// <summary>Героем управляют с этого компьютера: он слушает клавиатуру, за ним следит камера и HUD.</summary>
+    public bool IsLocal { get; set; } = true;
+
+    /// <summary>Героем управляет автопилот (только для самопроверки и симуляций).</summary>
+    public bool IsBot { get; set; }
+
+    /// <summary>Уже действовал в этом раунде — ждёт, пока сходят остальные, потом ходят враги.</summary>
+    public bool HasActed { get; set; }
+
+    /// <summary>Сколько улучшений этот герой ещё должен выбрать (за раунд можно получить несколько уровней).</summary>
+    public int PendingLevelUps { get; set; }
+
+    /// <summary>Погибший герой — призрак до следующего этажа: не ходит, враги его не замечают.</summary>
+    public bool IsGhost => IsDead;
+
+    public void SetDisplayName(string name) => DisplayName = name;
+
+    /// <summary>Отряд спустился на новый этаж — призрак оживает с половиной здоровья.</summary>
+    public void Revive()
+    {
+        Hp = Math.Max(1, MaxHp / 2);
+        BodyMaterial.AlbedoColor = DisplayColor;
+    }
+
     public ClassDef Class { get; private set; } = ClassCatalog.Warrior;
     public int Level { get; private set; }
     public int Experience { get; private set; }
@@ -63,7 +92,12 @@ public partial class Player : Actor
     private int _turnCounter;
     private readonly List<Perk> _perks = new();
 
-    protected override Color DisplayColor => IsInvisible ? new Color(BaseColor, InvisibleAlpha) : BaseColor;
+    private static readonly Color GhostColor = new(0.75f, 0.85f, 1f, 0.3f);
+
+    protected override Color DisplayColor =>
+        IsGhost ? GhostColor
+        : IsInvisible ? new Color(BaseColor, InvisibleAlpha)
+        : BaseColor;
 
     public override void _Ready()
     {
@@ -100,8 +134,9 @@ public partial class Player : Actor
     public void SetHighQuality(bool high)
     {
         _torchLight.ShadowEnabled = high;
-        _dust.Emitting = high;
-        _dust.Visible = high;
+        // Пылинки — только вокруг своего героя, иначе вчетвером их было бы слишком много
+        _dust.Emitting = high && IsLocal;
+        _dust.Visible = high && IsLocal;
     }
 
     /// <summary>
@@ -388,9 +423,9 @@ public partial class Player : Actor
     {
         base._Process(delta); // «дыхание» из Actor
         if (_gear != null)
-            _gear.Visible = !IsInvisible; // невидимка прячет и снаряжение
+            _gear.Visible = !IsInvisible && !IsGhost; // невидимка и призрак прячут снаряжение
 
-        if (_heldKey == Key.None)
+        if (_heldKey == Key.None || !IsLocal)
             return;
         if (!Input.IsPhysicalKeyPressed(_heldKey))
         {
@@ -409,7 +444,8 @@ public partial class Player : Actor
 
     public override void _UnhandledInput(InputEvent @event)
     {
-        if (@event is not InputEventKey { Pressed: true } key)
+        // Клавиатуру слушает только свой герой; герои друзей управляются по сети, боты — автопилотом
+        if (!IsLocal || IsBot || @event is not InputEventKey { Pressed: true } key)
             return;
 
         // PhysicalKeycode — физическое положение клавиши, поэтому WASD работает

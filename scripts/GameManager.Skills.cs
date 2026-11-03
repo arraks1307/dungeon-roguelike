@@ -7,6 +7,7 @@ namespace Roguelike;
 
 /// <summary>
 /// Часть GameManager про классы: способности (клавиши F и G) и выбор улучшений при повышении уровня.
+/// Способность применяет конкретный герой; окно улучшений — у своего героя.
 /// </summary>
 public partial class GameManager
 {
@@ -14,84 +15,84 @@ public partial class GameManager
 
     private ClassSelectPanel _classSelect;
     private LevelUpPanel _levelUpPanel;
-    private int _pendingLevelUps;
 
     // ---------- Способности ----------
 
-    private void UseSkill(int index)
+    /// <summary>Применить способность героя. Возвращает true, если ход потрачен.</summary>
+    private bool TryUseSkill(Player hero, int index)
     {
-        if (_state != GameState.Playing)
-            return;
-
-        var skill = _player.Class.Skills[index];
-        int cooldown = _player.SkillCooldowns[index];
+        var skill = hero.Class.Skills[index];
+        int cooldown = hero.SkillCooldowns[index];
         if (cooldown > 0)
         {
-            _hud.AddMessage($"«{skill.Name}» будет готов через {cooldown} ход(а).");
-            return;
+            if (IsLocalHero(hero))
+                _hud.AddMessage($"«{skill.Name}» будет готов через {cooldown} ход(а).");
+            return false;
         }
 
         bool used = skill.Id switch
         {
-            SkillId.Whirlwind => Whirlwind(),
-            SkillId.SecondWind => SecondWind(),
-            SkillId.AimedShot => AimedShot(),
-            SkillId.ArrowRain => ArrowRain(),
-            SkillId.Fireball => Fireball(),
-            SkillId.FrostNova => FrostNova(),
+            SkillId.Whirlwind => Whirlwind(hero),
+            SkillId.SecondWind => SecondWind(hero),
+            SkillId.AimedShot => AimedShot(hero),
+            SkillId.ArrowRain => ArrowRain(hero),
+            SkillId.Fireball => Fireball(hero),
+            SkillId.FrostNova => FrostNova(hero),
             _ => false,
         };
         if (!used)
-            return;
+            return false;
 
-        _player.StartCooldown(index);
-        if (_player.IsInvisible && skill.Id != SkillId.SecondWind)
+        hero.StartCooldown(index);
+        if (hero.IsInvisible && skill.Id != SkillId.SecondWind)
         {
-            _player.BreakInvisibility();
-            _hud.AddMessage("Способность выдаёт тебя — невидимость пропала.");
+            hero.BreakInvisibility();
+            Tell(hero, "Способность выдаёт тебя — невидимость пропала.", $"{hero.DisplayName} выдаёт себя способностью.");
         }
-        EndPlayerTurn();
-    }
-
-    private bool Whirlwind()
-    {
-        var targets = _enemies.Where(enemy => _map.AreAdjacent(_player.GridPos, enemy.GridPos)).ToList();
-        if (targets.Count == 0)
-            return NoTargets();
-        _hud.AddMessage("Вихрь! Ты бьёшь всех вокруг.", InfoColor);
-        Effects.Burst(this, _player.GridPos, _player.Class.Color, 30);
-        _sound.Play(Sound.Hit);
-        _camera.Shake(0.15f);
-        foreach (var enemy in targets)
-            HitEnemy(enemy, RollDamage(_player, enemy), Colors.White);
         return true;
     }
 
-    private bool SecondWind()
+    private bool Whirlwind(Player hero)
     {
-        if (!_player.IsHurt)
+        var targets = _enemies.Where(enemy => _map.AreAdjacent(hero.GridPos, enemy.GridPos)).ToList();
+        if (targets.Count == 0)
+            return NoTargets(hero);
+        Tell(hero, "Вихрь! Ты бьёшь всех вокруг.", $"{hero.DisplayName}: вихрь!", InfoColor);
+        Effects.Burst(this, hero.GridPos, hero.Class.Color, 30);
+        _sound.Play(Sound.Hit);
+        if (IsLocalHero(hero))
+            _camera.Shake(0.15f);
+        foreach (var enemy in targets)
+            HitEnemy(enemy, RollDamage(hero, enemy), Colors.White);
+        return true;
+    }
+
+    private bool SecondWind(Player hero)
+    {
+        if (!hero.IsHurt)
         {
-            _hud.AddMessage("Ты и так полностью здоров.");
+            if (IsLocalHero(hero))
+                _hud.AddMessage("Ты и так полностью здоров.");
             return false;
         }
-        int amount = _player.MaxHp * 40 / 100;
-        _player.Heal(amount);
-        Effects.FloatingText(this, _player.GridPos, $"+{amount}", GoodColor);
-        Effects.Burst(this, _player.GridPos, GoodColor, 20);
+        int amount = hero.MaxHp * 40 / 100;
+        hero.Heal(amount);
+        Effects.FloatingText(this, hero.GridPos, $"+{amount}", GoodColor);
+        Effects.Burst(this, hero.GridPos, GoodColor, 20);
         _sound.Play(Sound.Heal);
-        _hud.AddMessage($"Второе дыхание: +{amount} здоровья.", GoodColor);
+        Tell(hero, $"Второе дыхание: +{amount} здоровья.", $"{hero.DisplayName}: второе дыхание.", GoodColor);
         return true;
     }
 
-    private bool AimedShot()
+    private bool AimedShot(Player hero)
     {
-        var target = NearestVisibleEnemy();
+        var target = NearestVisibleEnemy(hero);
         if (target == null)
-            return NoTargets();
-        Effects.Projectile(this, _player.GridPos, target.GridPos, _player.Class.Color);
+            return NoTargets(hero);
+        Effects.Projectile(this, hero.GridPos, target.GridPos, hero.Class.Color);
         _sound.Play(Sound.Shoot);
-        bool crit = _rng.Next(100) < _player.Bonuses.Crit;
-        int damage = RollDamage(_player, target) + 5;
+        bool crit = _rng.Next(100) < hero.Bonuses.Crit;
+        int damage = RollDamage(hero, target) + 5;
         if (crit)
             damage *= 2;
         _hud.AddMessage($"Меткий выстрел{(crit ? " — в яблочко!" : "")}: {target.DisplayName} получает {damage}.");
@@ -99,29 +100,29 @@ public partial class GameManager
         return true;
     }
 
-    private bool ArrowRain()
+    private bool ArrowRain(Player hero)
     {
         var targets = _enemies.Where(enemy => _visible.Contains(enemy.GridPos)).ToList();
         if (targets.Count == 0)
-            return NoTargets();
+            return NoTargets(hero);
         _hud.AddMessage("Град стрел!", InfoColor);
         _sound.Play(Sound.Shoot);
         foreach (var enemy in targets)
         {
-            Effects.Projectile(this, _player.GridPos, enemy.GridPos, _player.Class.Color);
-            HitEnemy(enemy, Math.Max(1, _player.Attack - 1 - enemy.Defense), Colors.White);
+            Effects.Projectile(this, hero.GridPos, enemy.GridPos, hero.Class.Color);
+            HitEnemy(enemy, Math.Max(1, hero.Attack - 1 - enemy.Defense), Colors.White);
         }
         return true;
     }
 
-    private bool Fireball()
+    private bool Fireball(Player hero)
     {
-        var target = NearestVisibleEnemy();
+        var target = NearestVisibleEnemy(hero);
         if (target == null)
-            return NoTargets();
-        int damage = 6 + 2 * _player.Level;
+            return NoTargets(hero);
+        int damage = 6 + 2 * hero.Level;
         var fire = new Color(1f, 0.45f, 0.1f);
-        Effects.Projectile(this, _player.GridPos, target.GridPos, fire);
+        Effects.Projectile(this, hero.GridPos, target.GridPos, fire);
         Effects.Burst(this, target.GridPos, fire, 40);
         _sound.Play(Sound.Fire);
         _camera.Shake(0.2f);
@@ -132,14 +133,14 @@ public partial class GameManager
         return true;
     }
 
-    private bool FrostNova()
+    private bool FrostNova(Player hero)
     {
-        var targets = _enemies.Where(enemy => ChebyshevDistance(enemy.GridPos, _player.GridPos) <= 2).ToList();
+        var targets = _enemies.Where(enemy => ChebyshevDistance(enemy.GridPos, hero.GridPos) <= 2).ToList();
         if (targets.Count == 0)
-            return NoTargets();
-        int damage = 2 + _player.Level;
+            return NoTargets(hero);
+        int damage = 2 + hero.Level;
         var ice = new Color(0.55f, 0.85f, 1f);
-        Effects.Burst(this, _player.GridPos, ice, 50);
+        Effects.Burst(this, hero.GridPos, ice, 50);
         _sound.Play(Sound.Teleport);
         _hud.AddMessage($"Ледяная нова: {damage} урона и заморозка!", InfoColor);
         foreach (var enemy in targets)
@@ -151,15 +152,16 @@ public partial class GameManager
         return true;
     }
 
-    private bool NoTargets()
+    private bool NoTargets(Player hero)
     {
-        _hud.AddMessage("Рядом нет подходящей цели.");
+        if (IsLocalHero(hero))
+            _hud.AddMessage("Рядом нет подходящей цели.");
         return false;
     }
 
-    private Enemy NearestVisibleEnemy() => _enemies
-        .Where(enemy => _visible.Contains(enemy.GridPos) && ChebyshevDistance(enemy.GridPos, _player.GridPos) <= SkillRange)
-        .OrderBy(enemy => ChebyshevDistance(enemy.GridPos, _player.GridPos))
+    private Enemy NearestVisibleEnemy(Player hero) => _enemies
+        .Where(enemy => _visible.Contains(enemy.GridPos) && ChebyshevDistance(enemy.GridPos, hero.GridPos) <= SkillRange)
+        .OrderBy(enemy => ChebyshevDistance(enemy.GridPos, hero.GridPos))
         .FirstOrDefault();
 
     /// <summary>Нанести урон врагу с цифрой и частицами; убить, если здоровье кончилось.</summary>
@@ -188,22 +190,35 @@ public partial class GameManager
         _mainMenu.ShowMain();
     }
 
-    /// <summary>Показываем окно улучшений, если остались невыбранные (за один ход можно получить несколько уровней).</summary>
+    /// <summary>
+    /// Раздать улучшения за новые уровни. Ботам (самопроверка) — сразу случайное;
+    /// своему герою — окно выбора, если сейчас не открыто никакое другое окно.
+    /// </summary>
     private void TryShowLevelUp()
     {
-        if (_pendingLevelUps <= 0 || _state != GameState.Playing)
+        foreach (var hero in _heroes.Where(hero => hero.IsBot))
+        {
+            while (hero.PendingLevelUps > 0)
+            {
+                hero.ApplyPerk(ClassCatalog.RollPerks(_rng)[0]);
+                hero.PendingLevelUps--;
+            }
+        }
+
+        var local = _localHero;
+        if (local == null || local.IsBot || local.PendingLevelUps <= 0 || _state != GameState.Playing)
             return;
         _state = GameState.LevelUp;
-        _levelUpPanel.Open(_player.Level - _pendingLevelUps + 1, ClassCatalog.RollPerks(_rng));
+        _levelUpPanel.Open(local.Level - local.PendingLevelUps + 1, ClassCatalog.RollPerks(_rng));
     }
 
     private void OnPerkChosen(Perk perk)
     {
         if (_state != GameState.LevelUp)
             return;
-        _player.ApplyPerk(perk);
+        _localHero.ApplyPerk(perk);
         _hud.AddMessage($"Улучшение: {perk.Name}.", InfoColor);
-        _pendingLevelUps--;
+        _localHero.PendingLevelUps--;
         _levelUpPanel.Visible = false;
         _state = GameState.Playing;
         UpdateFov(); // «Зоркость» сразу меняет обзор

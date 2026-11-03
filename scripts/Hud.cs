@@ -32,6 +32,8 @@ public partial class Hud : CanvasLayer
     private ProgressBar _bossBar;
     private ColorRect _gameOverPanel;
     private Label _gameOverLabel;
+    private VBoxContainer _partyBox;
+    private Label _waitingLabel;
 
     public override void _Ready()
     {
@@ -55,7 +57,18 @@ public partial class Hud : CanvasLayer
         // Верхняя строка: карточка героя слева, мини-карта справа
         var topRow = new HBoxContainer { MouseFilter = Control.MouseFilterEnum.Ignore };
         column.AddChild(topRow);
-        topRow.AddChild(CreateHeroCard());
+        // Слева столбик: свой герой, под ним — остальные члены отряда и кого ждём
+        var leftColumn = new VBoxContainer { SizeFlagsVertical = Control.SizeFlags.ShrinkBegin, MouseFilter = Control.MouseFilterEnum.Ignore };
+        leftColumn.AddThemeConstantOverride("separation", 8);
+        topRow.AddChild(leftColumn);
+        leftColumn.AddChild(CreateHeroCard());
+        _partyBox = new VBoxContainer { Visible = false, MouseFilter = Control.MouseFilterEnum.Ignore };
+        _partyBox.AddThemeConstantOverride("separation", 6);
+        leftColumn.AddChild(_partyBox);
+        _waitingLabel = Ui.CreateMutedLabel(14);
+        _waitingLabel.Visible = false;
+        leftColumn.AddChild(_waitingLabel);
+
         topRow.AddChild(new Control { SizeFlagsHorizontal = Control.SizeFlags.ExpandFill, MouseFilter = Control.MouseFilterEnum.Ignore });
 
         _minimapCard = new PanelContainer { SizeFlagsVertical = Control.SizeFlags.ShrinkBegin, MouseFilter = Control.MouseFilterEnum.Ignore };
@@ -296,9 +309,48 @@ public partial class Hud : CanvasLayer
         _bossBar.Value = boss.Hp;
     }
 
+    /// <summary>
+    /// Компактные карточки остальных героев отряда: имя цветом класса, уровень, полоска здоровья
+    /// и пометка «призрак» или «сходил». В одиночной игре блок скрыт.
+    /// </summary>
+    public void UpdateParty(List<Player> heroes, Player local)
+    {
+        Clear(_partyBox);
+        var others = heroes.Where(hero => hero != local).ToList();
+        _partyBox.Visible = others.Count > 0;
+        foreach (var hero in others)
+        {
+            var card = new PanelContainer { MouseFilter = Control.MouseFilterEnum.Ignore };
+            card.AddThemeStyleboxOverride("panel", UiTheme.Glass(0.45f, 10, 8f));
+            _partyBox.AddChild(card);
+
+            var rows = new VBoxContainer { MouseFilter = Control.MouseFilterEnum.Ignore };
+            rows.AddThemeConstantOverride("separation", 3);
+            card.AddChild(rows);
+
+            string status = hero.IsGhost ? "  •  призрак" : hero.HasActed ? "  •  сходил" : "";
+            var name = Ui.CreateLabel(14, $"{hero.DisplayName}  •  ур. {hero.Level}{status}");
+            name.AddThemeColorOverride("font_color", hero.IsGhost ? UiTheme.TextMuted : hero.Class.Color.Lightened(0.35f));
+            rows.AddChild(name);
+
+            var bar = CreateBar(200f, 6f, hero.IsGhost ? new Color(1f, 1f, 1f, 0.15f) : HealthColor);
+            bar.MaxValue = hero.MaxHp;
+            bar.Value = hero.IsGhost ? 0 : hero.Hp;
+            rows.AddChild(bar);
+        }
+    }
+
+    /// <summary>Строка «Ждём: …» — кто из отряда ещё не сделал ход в этом раунде.</summary>
+    public void SetWaiting(List<string> names)
+    {
+        _waitingLabel.Visible = names is { Count: > 0 };
+        if (_waitingLabel.Visible)
+            _waitingLabel.Text = $"Ждём: {string.Join(", ", names)}";
+    }
+
     public void UpdateMinimap(DungeonMap map, HashSet<Vector2I> visible, Vector2I player,
-        List<Vector2I> visibleEnemies, List<(Vector2I Cell, Color Color)> items) =>
-        _minimap.UpdateData(map, visible, player, visibleEnemies, items);
+        List<Vector2I> visibleEnemies, List<(Vector2I Cell, Color Color)> items, List<(Vector2I Cell, Color Color)> allies) =>
+        _minimap.UpdateData(map, visible, player, visibleEnemies, items, allies);
 
     public void ToggleMinimap() => _minimapCard.Visible = !_minimapCard.Visible;
 

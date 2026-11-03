@@ -11,16 +11,22 @@ namespace Roguelike;
 public interface IGameWorld
 {
     DungeonMap Map { get; }
-    Vector2I PlayerPos { get; }
-    bool PlayerInvisible { get; }
 
-    /// <summary>Сколько шагов от каждой клетки до игрока (поиск в ширину, считается раз за ход).</summary>
+    /// <summary>
+    /// Ближайший герой, которого враг может преследовать: живой и не невидимый.
+    /// null — таких нет (все погибли или скрылись).
+    /// </summary>
+    Player NearestTarget(Vector2I from);
+
+    /// <summary>Сколько шагов от каждой клетки до ближайшего героя-цели (считается раз за ход).</summary>
     Dictionary<Vector2I, int> PlayerDistances { get; }
 
     bool IsOccupied(Vector2I cell);
+
+    /// <summary>Видит ли эту клетку отряд (обзор у героев общий).</summary>
     bool IsVisibleToPlayer(Vector2I cell);
 
-    void EnemyAttacksPlayer(Enemy enemy, bool ranged);
+    void EnemyAttacksPlayer(Enemy enemy, Player target, bool ranged);
     void OpenDoor(Vector2I cell);
 
     /// <summary>Призвать помощников рядом с собой. type = null — случайные слабые враги.</summary>

@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Linq;
 using Godot;
 
@@ -21,9 +22,10 @@ public partial class GameManager
     private bool IsRunInProgress =>
         _state is GameState.Playing or GameState.Paused or GameState.Inventory or GameState.Shop or GameState.LevelUp;
 
+    /// <summary>Сохраняется только одиночная игра: сетевой забег живёт, пока подключены все игроки.</summary>
     private void SaveRun()
     {
-        if (!IsRunInProgress || _player.IsDead || _simulateGames > 0)
+        if (!IsRunInProgress || !IsSinglePlayer || _localHero.IsDead || _simulateGames > 0)
             return;
         SaveSystem.Save(CreateSaveData());
     }
@@ -34,10 +36,10 @@ public partial class GameManager
         {
             Floor = _floor,
             Kills = _kills,
-            PendingLevelUps = _pendingLevelUps,
+            PendingLevelUps = _localHero.PendingLevelUps,
             Turns = _turns,
             Difficulty = _difficulty.Id,
-            Player = _player.CreateSave(),
+            Player = _localHero.CreateSave(),
             Map = MapSave.From(_map),
             Enemies = _enemies.Where(enemy => !enemy.IsDead).Select(enemy => enemy.CreateSave()).ToList(),
             Pickups = _floorItems.Select(pair => new PickupSave
@@ -87,10 +89,15 @@ public partial class GameManager
             ClearLevelObjects();
             _floor = data.Floor;
             _kills = data.Kills;
-            _pendingLevelUps = data.PendingLevelUps;
             _turns = data.Turns;
             _victory = false;
+            _gameOver = false;
             _difficulty = Difficulties.Get(data.Difficulty);
+
+            // Сохранение — всегда одиночная игра: отряд из одного героя нужного класса
+            _partySpec = new List<HeroSpec> { new(ClassCatalog.Get(data.Player.Class)) };
+            CreateParty(_partySpec, 0);
+            _localHero.PendingLevelUps = data.PendingLevelUps;
             _levelUpPanel.Visible = false;
             _map = data.Map.ToMap();
             _renderer.Build(_map);
@@ -100,10 +107,9 @@ public partial class GameManager
             _mainMenu.Visible = false;
             _hud.Visible = true;
             _hud.HideGameOver();
-            _player.Visible = true;
             _camera.MenuMode = false;
-            _player.RestoreSave(data.Player);
-            UiTheme.SetAccent(_player.Class.Color.Lightened(0.15f));
+            _localHero.RestoreSave(data.Player);
+            UiTheme.SetAccent(_localHero.Class.Color.Lightened(0.15f));
             _camera.SnapToTarget();
 
             foreach (var save in data.Enemies)

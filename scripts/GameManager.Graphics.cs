@@ -56,6 +56,7 @@ public partial class GameManager
         _environment.SsaoEnabled = high;
         _environment.VolumetricFogEnabled = high;
         GetViewport().Msaa3D = high ? Viewport.Msaa.Msaa2X : Viewport.Msaa.Disabled;
-        _player?.SetHighQuality(high);
+        foreach (var hero in _heroes)
+            hero.SetHighQuality(high);
     }
 }

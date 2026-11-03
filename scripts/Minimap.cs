@@ -22,6 +22,7 @@ public partial class Minimap : Control
     private Vector2I _player;
     private List<Vector2I> _enemies = new();
     private List<(Vector2I Cell, Color Color)> _items = new();
+    private List<(Vector2I Cell, Color Color)> _allies = new();
 
     public Minimap()
     {
@@ -29,13 +30,14 @@ public partial class Minimap : Control
     }
 
     public void UpdateData(DungeonMap map, HashSet<Vector2I> visible, Vector2I player,
-        List<Vector2I> visibleEnemies, List<(Vector2I Cell, Color Color)> items)
+        List<Vector2I> visibleEnemies, List<(Vector2I Cell, Color Color)> items, List<(Vector2I Cell, Color Color)> allies)
     {
         _map = map;
         _visible = visible;
         _player = player;
         _enemies = visibleEnemies;
         _items = items;
+        _allies = allies;
         CustomMinimumSize = new Vector2(map.Width * CellSize, map.Height * CellSize);
         QueueRedraw();
     }
@@ -67,6 +69,8 @@ public partial class Minimap : Control
                 DrawCell(cell, color);
         foreach (var enemy in _enemies)
             DrawCell(enemy, EnemyColor);
+        foreach (var (cell, color) in _allies)
+            DrawCell(cell, color); // союзники — цветом своего класса
 
         // Игрока рисуем чуть крупнее, чтобы его было легко найти
         DrawRect(new Rect2(_player.X * CellSize - 1, _player.Y * CellSize - 1, CellSize + 2, CellSize + 2), PlayerColor);

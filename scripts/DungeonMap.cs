@@ -155,11 +155,23 @@ public class DungeonMap
     /// Поиск в ширину (BFS) от точки: для каждой достижимой клетки — сколько шагов до неё.
     /// Враги используют это поле, чтобы идти к игроку кратчайшим путём.
     /// </summary>
-    public Dictionary<Vector2I, int> DistanceField(Vector2I start, int maxDistance)
+    public Dictionary<Vector2I, int> DistanceField(Vector2I start, int maxDistance) =>
+        DistanceField(new[] { start }, maxDistance);
+
+    /// <summary>
+    /// Поиск в ширину сразу от нескольких стартовых клеток: все они получают расстояние 0.
+    /// Результат — расстояние до БЛИЖАЙШЕГО из стартов, поэтому каждый враг сам идёт
+    /// к ближайшему герою, и не нужно считать отдельное поле для каждого.
+    /// </summary>
+    public Dictionary<Vector2I, int> DistanceField(IEnumerable<Vector2I> starts, int maxDistance)
     {
-        var distances = new Dictionary<Vector2I, int> { [start] = 0 };
+        var distances = new Dictionary<Vector2I, int>();
         var queue = new Queue<Vector2I>();
-        queue.Enqueue(start);
+        foreach (var start in starts)
+        {
+            if (distances.TryAdd(start, 0))
+                queue.Enqueue(start);
+        }
 
         while (queue.Count > 0)
         {

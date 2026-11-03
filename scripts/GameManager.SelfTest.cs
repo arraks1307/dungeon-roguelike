@@ -18,6 +18,7 @@ public partial class GameManager
     private int _startFloor = 1;
     private bool _godMode; // игрок не может погибнуть
     private ClassDef _testClass; // null — случайный класс
+    private int _testParty = 1;  // сколько героев в отряде (все под автопилотом)
     private GraphicsQuality? _testGraphics; // качество графики только на время проверки
     private DifficultyDef _testDifficulty; // null — по очереди или обычная
 
@@ -67,6 +68,8 @@ public partial class GameManager
                 _simulateGames = int.Parse(arg["--simulate=".Length..]);
             else if (arg.StartsWith("--graphics="))
                 _testGraphics = arg["--graphics=".Length..] == "low" ? GraphicsQuality.Low : GraphicsQuality.High;
+            else if (arg.StartsWith("--party="))
+                _testParty = System.Math.Clamp(int.Parse(arg["--party=".Length..]), 1, MaxPartySize);
         }
 
         // Самопроверка не должна трогать настоящее сохранение игрока
@@ -77,11 +80,26 @@ public partial class GameManager
         }
     }
 
+    /// <summary>
+    /// Отряд для проверки: первый герой — указанного класса (или случайного), остальные — по кругу.
+    /// В режиме удержания клавиши свой герой управляется клавиатурой, иначе все — автопилотом.
+    /// </summary>
+    private List<HeroSpec> TestParty(int seed)
+    {
+        var party = new List<HeroSpec>();
+        for (int i = 0; i < _testParty; i++)
+        {
+            var playerClass = i == 0 && _testClass != null ? _testClass : ClassCatalog.All[(seed + i) % ClassCatalog.All.Length];
+            party.Add(new HeroSpec(playerClass, Bot: _screenshotView != "hold" || i > 0));
+        }
+        return party;
+    }
+
     /// <summary>Короткая сводка о мире — чтобы сравнить состояние до сохранения и после загрузки.</summary>
     private string WorldSummary() =>
-        $"этаж {_floor}, убито {_kills}, позиция {_player.GridPos}, здоровье {_player.Hp}/{_player.MaxHp}, " +
-        $"атака {_player.Attack}, золото {_player.Gold}, сумка {_player.Inventory.Items.Count}, " +
-        $"надето {_player.Inventory.Equipped.Count()}, врагов {_enemies.Count}, предметов на полу {_floorItems.Count}, " +
+        $"этаж {_floor}, убито {_kills}, позиция {_localHero.GridPos}, здоровье {_localHero.Hp}/{_localHero.MaxHp}, " +
+        $"атака {_localHero.Attack}, золото {_localHero.Gold}, сумка {_localHero.Inventory.Items.Count}, " +
+        $"надето {_localHero.Inventory.Equipped.Count()}, врагов {_enemies.Count}, предметов на полу {_floorItems.Count}, " +
         $"торговец {(_merchant != null ? "есть" : "нет")}, сундуков {_chests.Count}, ловушек {_map.Traps.Count}, " +
         $"тема {_map.Theme.Name}";
 
@@ -107,15 +125,14 @@ public partial class GameManager
                 _classSelect.AskConfirm(_testClass ?? ClassCatalog.Mage);
             }
             else if (!inMenu)
-                StartNewGame(_testClass ?? ClassCatalog.All[_rng.Next(ClassCatalog.All.Length)],
-                    _testDifficulty ?? Difficulties.Normal);
+                StartRun(TestParty(_rng.Next(ClassCatalog.All.Length)), _testDifficulty ?? Difficulties.Normal);
         }
 
         int moveFrames = inMenu ? 0 : _autoMoves * 3;
         if (_frame <= moveFrames)
         {
             if (_frame % 3 == 0)
-                AutoPilotTurn();
+                AutoPilotRound();
             return;
         }
 
@@ -136,8 +153,9 @@ public partial class GameManager
 
         if (_frame == moveFrames + 40)
         {
-            GD.Print($"Самопроверка ({_player.Class.Name}, ур. {_player.Level}, FPS {Engine.GetFramesPerSecond()}): этаж {_floor}, убито {_kills}, здоровье {_player.Hp}, " +
-                     $"золото {_player.Gold}, предметов {_player.Inventory.Items.Count}, состояние {_state}");
+            string party = string.Join(", ", _heroes.Select(hero => $"{hero.DisplayName} ур.{hero.Level} {(hero.IsGhost ? "призрак" : $"{hero.Hp}/{hero.MaxHp}")}"));
+            GD.Print($"Самопроверка (FPS {Engine.GetFramesPerSecond()}): этаж {_floor}, раундов {_turns}, убито {_kills}, " +
+                     $"отряд: {party}, состояние {_state}{(_gameOver ? " (забег окончен)" : "")}");
             GetViewport().GetTexture().GetImage().SavePng(_screenshotPath);
             GetTree().Quit();
         }
@@ -152,12 +170,12 @@ public partial class GameManager
                 break;
             case "inventory":
                 // Набиваем сумку случайными вещами, чтобы было что показать
-                while (_player.Inventory.Items.Count < 8)
-                    _player.Inventory.TryAdd(ItemCatalog.Roll(_rng, _floor + 4));
+                while (_localHero.Inventory.Items.Count < 8)
+                    _localHero.Inventory.TryAdd(ItemCatalog.Roll(_rng, _floor + 4));
                 OpenInventory();
                 break;
             case "shop":
-                _player.Gold = 150;
+                _localHero.Gold = 150;
                 if (_merchant == null)
                     SpawnMerchant();
                 OpenShop();
@@ -192,11 +210,8 @@ public partial class GameManager
         }
     }
 
-    /// <summary>
-    /// Один ход автопилота. Он не гений, но старается вести себя разумно: выбирает улучшения,
-    /// пьёт зелье при низком здоровье, надевает экипировку, пользуется способностями.
-    /// </summary>
-    private void AutoPilotTurn()
+    /// <summary>Каждый герой, который ещё не сходил в этом раунде, делает ход автопилотом.</summary>
+    private void AutoPilotRound()
     {
         switch (_state)
         {
@@ -209,52 +224,58 @@ public partial class GameManager
             case GameState.Inventory:
                 CloseInventory();
                 return;
-            case not GameState.Playing:
-                return;
         }
 
-        var items = _player.Inventory.Items;
-        int potion = items.FindIndex(item => item.Kind == ItemKind.HealthPotion);
-        if (_player.Hp < _player.MaxHp * 0.4f && potion >= 0)
+        foreach (var hero in _heroes.ToList())
         {
-            QuickUse(potion);
-            return;
+            if (_gameOver)
+                return;
+            if (!hero.IsGhost && !hero.HasActed && hero.IsBot)
+                AutoPilotTurn(hero);
         }
+    }
+
+    /// <summary>
+    /// Один ход автопилота за героя. Он не гений, но старается вести себя разумно: пьёт зелье
+    /// при низком здоровье, надевает экипировку получше, пользуется способностями, дерётся.
+    /// Если выбранное действие не сработало (стена, нет цели), пробует случайный шаг.
+    /// </summary>
+    private void AutoPilotTurn(Player hero)
+    {
+        bool Try(HeroAction action) => PerformHeroAction(hero, action);
+
+        var items = hero.Inventory.Items;
+        int potion = items.FindIndex(item => item.Kind == ItemKind.HealthPotion);
+        if (hero.Hp < hero.MaxHp * 0.4f && potion >= 0 && Try(HeroAction.UseItem(potion)))
+            return;
 
         // Надеваем вещь, только если она лучше надетой — иначе автопилот менял бы их туда-обратно вечно
         int upgrade = items.FindIndex(item => item.IsEquipment &&
-            GearScore(item) > GearScore(_player.Inventory.GetEquipped(item.Slot)));
-        if (upgrade >= 0)
-        {
-            QuickUse(upgrade);
+            GearScore(item) > GearScore(hero.Inventory.GetEquipped(item.Slot)));
+        if (upgrade >= 0 && Try(HeroAction.UseItem(upgrade)))
             return;
-        }
+
+        bool enemyNear = _enemies.Any(enemy => _visible.Contains(enemy.GridPos) && ChebyshevDistance(enemy.GridPos, hero.GridPos) <= 3);
+        for (int i = 0; i < 2; i++)
+            if (enemyNear && hero.SkillCooldowns[i] == 0 && _rng.NextDouble() < 0.5 && Try(HeroAction.Skill(i)))
+                return;
+
+        if (_rng.NextDouble() < 0.05 && items.Count > 0 && Try(HeroAction.UseItem(_rng.Next(items.Count))))
+            return; // иногда пробует случайный предмет
 
         // Враг вплотную — бьём самого раненого, а не убегаем к лестнице
         var adjacent = _enemies
-            .Where(enemy => _map.AreAdjacent(_player.GridPos, enemy.GridPos))
+            .Where(enemy => _map.AreAdjacent(hero.GridPos, enemy.GridPos))
             .OrderBy(enemy => enemy.Hp)
             .FirstOrDefault();
-
-        bool enemyNear = _enemies.Any(enemy => _visible.Contains(enemy.GridPos) && ChebyshevDistance(enemy.GridPos, _player.GridPos) <= 3);
-        for (int i = 0; i < 2; i++)
-        {
-            if (enemyNear && _player.SkillCooldowns[i] == 0 && _rng.NextDouble() < 0.5)
-            {
-                int before = _player.SkillCooldowns[i];
-                UseSkill(i);
-                if (_player.SkillCooldowns[i] != before || _state != GameState.Playing)
-                    return; // способность сработала — ход потрачен
-            }
-        }
-
-        if (_rng.NextDouble() < 0.05 && items.Count > 0)
-        {
-            QuickUse(_rng.Next(items.Count)); // иногда пробует случайный предмет
+        var direction = adjacent != null ? adjacent.GridPos - hero.GridPos : AutoPilotDirection(hero);
+        if (Try(HeroAction.Move(direction)))
             return;
-        }
 
-        OnPlayerAction(adjacent != null ? adjacent.GridPos - _player.GridPos : AutoPilotDirection());
+        for (int attempt = 0; attempt < 4; attempt++)
+            if (Try(HeroAction.Move(DungeonMap.Directions[_rng.Next(DungeonMap.Directions.Length)])))
+                return;
+        Try(HeroAction.Wait); // совсем некуда — пропускаем ход, чтобы раунд не завис
     }
 
     // ---------- Симуляция для настройки баланса ----------
@@ -271,11 +292,9 @@ public partial class GameManager
 
     private void StartSimulatedGame()
     {
-        // Классы и сложности по очереди, чтобы выборка была ровной
-        var playerClass = _testClass ?? ClassCatalog.All[_simGame % ClassCatalog.All.Length];
-        var difficulty = _testDifficulty ?? Difficulties.Normal;
+        // Классы по очереди, чтобы выборка была ровной
         _simActions = 0;
-        StartNewGame(playerClass, difficulty);
+        StartRun(TestParty(_simGame), _testDifficulty ?? Difficulties.Normal);
     }
 
     private void RunSimulation()
@@ -289,9 +308,10 @@ public partial class GameManager
         for (int i = 0; i < SimActionsPerFrame; i++)
         {
             bool timeout = _turns >= SimTurnLimit || _simActions >= SimTurnLimit * 5;
-            if (_state == GameState.GameOver || timeout)
+            if (_gameOver || timeout)
             {
-                _simResults.Add(new SimResult(_player.Class.Name, _difficulty.Name, _floor, _player.Level, _victory, timeout, _turns));
+                string label = IsSinglePlayer ? _localHero.Class.Name : $"Отряд ×{_heroes.Count}";
+                _simResults.Add(new SimResult(label, _difficulty.Name, _floor, _localHero.Level, _victory, timeout, _turns));
                 _simGame++;
                 if (_simGame >= _simulateGames)
                 {
@@ -302,7 +322,7 @@ public partial class GameManager
                 StartSimulatedGame();
             }
             _simActions++;
-            AutoPilotTurn();
+            AutoPilotRound();
         }
     }
 
@@ -343,7 +363,7 @@ public partial class GameManager
         int FreeCells(Vector2I direction)
         {
             int count = 0;
-            var cell = _player.GridPos + direction;
+            var cell = _localHero.GridPos + direction;
             while (_map.IsWalkable(cell) && count < 20)
             {
                 count++;
@@ -389,27 +409,27 @@ public partial class GameManager
     /// Автопилот ведёт себя как обычный игрок: пока здоровья хватает, идёт драться с видимыми
     /// врагами (опыт и добыча), иначе — к лестнице. Иногда шагает случайно, чтобы не застревать.
     /// </summary>
-    private Vector2I AutoPilotDirection()
+    private Vector2I AutoPilotDirection(Player hero)
     {
         var randomDirection = DungeonMap.Directions[_rng.Next(DungeonMap.Directions.Length)];
         if (_rng.NextDouble() < 0.15)
             return randomDirection;
 
         var prey = _enemies
-            .Where(enemy => _visible.Contains(enemy.GridPos) && ChebyshevDistance(enemy.GridPos, _player.GridPos) <= 6)
-            .OrderBy(enemy => ChebyshevDistance(enemy.GridPos, _player.GridPos))
+            .Where(enemy => _visible.Contains(enemy.GridPos) && ChebyshevDistance(enemy.GridPos, hero.GridPos) <= 6)
+            .OrderBy(enemy => ChebyshevDistance(enemy.GridPos, hero.GridPos))
             .FirstOrDefault();
-        var goal = prey != null && _player.Hp > _player.MaxHp * 0.45f ? prey.GridPos : _map.StairsPos;
+        var goal = prey != null && hero.Hp > hero.MaxHp * 0.45f ? prey.GridPos : _map.StairsPos;
 
         var distances = _map.DistanceField(goal, MapWidth * MapHeight);
-        if (!distances.TryGetValue(_player.GridPos, out int best))
+        if (!distances.TryGetValue(hero.GridPos, out int best))
             return randomDirection;
 
         var result = randomDirection;
         foreach (var direction in DungeonMap.Directions)
         {
-            var next = _player.GridPos + direction;
-            if (distances.TryGetValue(next, out int distance) && distance < best && _map.CanMove(_player.GridPos, next))
+            var next = hero.GridPos + direction;
+            if (distances.TryGetValue(next, out int distance) && distance < best && _map.CanMove(hero.GridPos, next))
             {
                 best = distance;
                 result = direction;
