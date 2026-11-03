@@ -78,8 +78,13 @@ public partial class GameManager
                 _partyHpPerHero = float.Parse(parts[0], culture);
                 _partyEnemiesPerHero = float.Parse(parts[1], culture);
                 _partyDamagePerHero = float.Parse(parts[2], culture);
-                if (parts.Length > 3)
-                    _partyGrowth = float.Parse(parts[3], culture);
+            }
+            else if (arg.StartsWith("--party-weights="))
+            {
+                // --party-weights=вес2,вес3,вес4 — «вес» героев сверх первого для отряда из 2, 3, 4
+                var culture = System.Globalization.CultureInfo.InvariantCulture;
+                var weights = arg["--party-weights=".Length..].Split(',').Select(w => float.Parse(w, culture));
+                _partyWeights = new[] { 0f }.Concat(weights).ToArray();
             }
             else if (arg.StartsWith("--net-host="))
             {
@@ -93,6 +98,8 @@ public partial class GameManager
             }
             else if (arg.StartsWith("--net-rounds="))
                 _netTestRounds = int.Parse(arg["--net-rounds=".Length..]);
+            else if (arg.StartsWith("--net-desync-at="))
+                _netTestDesyncAt = int.Parse(arg["--net-desync-at=".Length..]);
             else if (arg.StartsWith("--net-quit-at="))
                 _netTestQuitAt = int.Parse(arg["--net-quit-at=".Length..]);
             else if (arg.StartsWith("--net-name="))
@@ -462,7 +469,8 @@ public partial class GameManager
             .Where(enemy => _visible.Contains(enemy.GridPos) && ChebyshevDistance(enemy.GridPos, hero.GridPos) <= 6)
             .OrderBy(enemy => ChebyshevDistance(enemy.GridPos, hero.GridPos))
             .FirstOrDefault();
-        var goal = prey != null && hero.Hp > hero.MaxHp * 0.45f ? prey.GridPos : _map.StairsPos;
+        // Отряд ждёт у лестницы — идём к ней, а не за добычей
+        var goal = prey != null && hero.Hp > hero.MaxHp * 0.45f && !_descentRequested ? prey.GridPos : _map.StairsPos;
 
         var distances = _map.DistanceField(goal, MapWidth * MapHeight);
         if (!distances.TryGetValue(hero.GridPos, out int best))

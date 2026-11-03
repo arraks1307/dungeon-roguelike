@@ -34,6 +34,12 @@ public partial class Hud : CanvasLayer
     private Label _gameOverLabel;
     private VBoxContainer _partyBox;
     private Label _waitingLabel;
+    private Label _stairsLabel;
+    private LineEdit _chatEdit;
+    private Label _hintLabel;
+
+    public event System.Action<string> ChatSubmitted;
+    public event System.Action ChatCancelled;
 
     public override void _Ready()
     {
@@ -68,6 +74,10 @@ public partial class Hud : CanvasLayer
         _waitingLabel = Ui.CreateMutedLabel(14);
         _waitingLabel.Visible = false;
         leftColumn.AddChild(_waitingLabel);
+        _stairsLabel = Ui.CreateLabel(14);
+        _stairsLabel.AddThemeColorOverride("font_color", new Color(1f, 0.85f, 0.4f));
+        _stairsLabel.Visible = false;
+        leftColumn.AddChild(_stairsLabel);
 
         topRow.AddChild(new Control { SizeFlagsHorizontal = Control.SizeFlags.ExpandFill, MouseFilter = Control.MouseFilterEnum.Ignore });
 
@@ -84,9 +94,30 @@ public partial class Hud : CanvasLayer
         _log.AddThemeConstantOverride("separation", 2);
         column.AddChild(_log);
 
-        column.AddChild(Ui.CreateMutedLabel(13,
-            "WASD / стрелки — ход и атака  •  Q E Z C — диагонали  •  Пробел — ждать  •  " +
-            "F G — способности  •  I — инвентарь  •  1–5 — слоты  •  M — карта  •  Esc — пауза"));
+        // Строка чата (сетевая игра): появляется по Enter, Enter — отправить, Esc — закрыть
+        _chatEdit = new LineEdit
+        {
+            Visible = false,
+            MaxLength = NetSession.MaxChatLength,
+            PlaceholderText = "Сообщение отряду…  Enter — отправить, Esc — закрыть",
+            CustomMinimumSize = new Vector2(560f, 40f),
+            SizeFlagsHorizontal = Control.SizeFlags.ShrinkBegin,
+        };
+        _chatEdit.AddThemeFontSizeOverride("font_size", 17);
+        _chatEdit.TextSubmitted += text => ChatSubmitted?.Invoke(text);
+        _chatEdit.GuiInput += @event =>
+        {
+            if (@event is InputEventKey { Pressed: true, PhysicalKeycode: Key.Escape })
+            {
+                _chatEdit.AcceptEvent();
+                ChatCancelled?.Invoke();
+            }
+        };
+        column.AddChild(_chatEdit);
+
+        _hintLabel = Ui.CreateMutedLabel(13);
+        column.AddChild(_hintLabel);
+        SetNetworkHints(false);
 
         // Быстрые слоты в правом нижнем углу: якоря справа снизу, растут влево
         _hotbar = new HBoxContainer
@@ -350,6 +381,40 @@ public partial class Hud : CanvasLayer
         if (_waitingLabel.Visible)
             _waitingLabel.Text = $"Ждём: {string.Join(", ", names)}";
     }
+
+    /// <summary>Строка «К лестнице: …» — отряд собирается спускаться, а кто-то ещё далеко.</summary>
+    public void SetStairsWaiting(List<string> names)
+    {
+        _stairsLabel.Visible = names != null;
+        if (names != null)
+            _stairsLabel.Text = names.Count > 0
+                ? $"Спуск по лестнице — когда подойдут: {string.Join(", ", names)}"
+                : "Отряд у лестницы";
+    }
+
+    /// <summary>Подсказка по клавишам внизу экрана; в сетевой игре добавляются чат и метки.</summary>
+    public void SetNetworkHints(bool network) => _hintLabel.Text =
+        "WASD / стрелки — ход и атака  •  Q E Z C — диагонали  •  Пробел — ждать  •  " +
+        "F G — способности  •  I — инвентарь  •  1–5 — слоты  •  M — карта  •  Esc — пауза" +
+        (network ? "  •  Enter — чат  •  ПКМ — метка" : "");
+
+    public bool IsChatOpen => _chatEdit.Visible;
+
+    public void OpenChat()
+    {
+        _chatEdit.Text = "";
+        _chatEdit.Visible = true;
+        _chatEdit.CallDeferred(Control.MethodName.GrabFocus); // после этого кадра — иначе сам Enter попадёт в поле
+    }
+
+    public void CloseChat()
+    {
+        _chatEdit.Visible = false;
+        _chatEdit.ReleaseFocus();
+    }
+
+    /// <summary>Метка союзника на мини-карте (мигает несколько секунд).</summary>
+    public void AddPing(Vector2I cell, Color color) => _minimap.AddPing(cell, color);
 
     public void UpdateMinimap(DungeonMap map, HashSet<Vector2I> visible, Vector2I player,
         List<Vector2I> visibleEnemies, List<(Vector2I Cell, Color Color)> items, List<(Vector2I Cell, Color Color)> allies) =>

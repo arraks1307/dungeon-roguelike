@@ -38,6 +38,10 @@ public partial class NetSession : Node
     public event Action<int, HeroAction, int> ActionBroadcast;       // у всех: герой, действие, контрольная сумма хоста
     public event Action<long> PeerLeft;                              // только у хоста: игрок отключился
     public event Action<string> Disconnected;                        // только у клиента: связь с хостом пропала
+    public event Action<long, string> ChatReceived;                  // у всех: кто и что написал
+    public event Action<long, Vector2I> PingReceived;                // у всех: кто и какую клетку отметил
+    public event Action<long> ResyncRequested;                       // только у хоста: клиенту нужен снимок мира
+    public event Action<byte[]> SnapshotReceived;                    // у всех: снимок мира от хоста
 
     private readonly List<LobbyMember> _members = new();
     private string _myName = "";
@@ -268,6 +272,81 @@ public partial class NetSession : Node
     private void ApplyAction(int heroId, int kind, int dx, int dy, int index, int extra, int checksum) =>
         ActionBroadcast?.Invoke(heroId, new HeroAction((HeroActionKind)kind, new Vector2I(dx, dy), index, extra), checksum);
 
+    // ---------- Чат и метки ----------
+    // Они не меняют мир, поэтому идут мимо потока действий: хост просто пересылает их всем.
+
+    public const int MaxChatLength = 120;
+
+    public void SendChat(string text)
+    {
+        text = (text ?? "").Trim();
+        if (text.Length == 0)
+            return;
+        if (text.Length > MaxChatLength)
+            text = text[..MaxChatLength];
+        if (IsHost)
+            Rpc(MethodName.ChatMessage, 1L, text);
+        else if (IsActive)
+            RpcId(1, MethodName.RequestChat, text);
+    }
+
+    [Rpc(MultiplayerApi.RpcMode.AnyPeer)]
+    private void RequestChat(string text)
+    {
+        if (IsHost && text.Length <= MaxChatLength)
+            Rpc(MethodName.ChatMessage, (long)Multiplayer.GetRemoteSenderId(), text);
+    }
+
+    [Rpc(MultiplayerApi.RpcMode.Authority, CallLocal = true)]
+    private void ChatMessage(long peerId, string text) => ChatReceived?.Invoke(peerId, text);
+
+    public void SendPing(Vector2I cell)
+    {
+        if (IsHost)
+            Rpc(MethodName.PingMessage, 1L, cell.X, cell.Y);
+        else if (IsActive)
+            RpcId(1, MethodName.RequestPing, cell.X, cell.Y);
+    }
+
+    [Rpc(MultiplayerApi.RpcMode.AnyPeer)]
+    private void RequestPing(int x, int y)
+    {
+        if (IsHost)
+            Rpc(MethodName.PingMessage, (long)Multiplayer.GetRemoteSenderId(), x, y);
+    }
+
+    [Rpc(MultiplayerApi.RpcMode.Authority, CallLocal = true)]
+    private void PingMessage(long peerId, int x, int y) => PingReceived?.Invoke(peerId, new Vector2I(x, y));
+
+    // ---------- Восстановление мира ----------
+
+    /// <summary>Клиент заметил, что его мир разошёлся с хостом, и просит снимок.</summary>
+    public void RequestResync()
+    {
+        if (IsActive && !IsHost)
+            RpcId(1, MethodName.ResyncRequest);
+    }
+
+    [Rpc(MultiplayerApi.RpcMode.AnyPeer)]
+    private void ResyncRequest()
+    {
+        if (IsHost && _inGame)
+            ResyncRequested?.Invoke(Multiplayer.GetRemoteSenderId());
+    }
+
+    /// <summary>
+    /// Хост рассылает снимок мира ВСЕМ, включая себя. Восстанавливаются все одновременно и в одной
+    /// точке потока действий — поэтому миры совпадут даже в мелочах, которых нет в снимке.
+    /// </summary>
+    public void BroadcastSnapshot(byte[] snapshot)
+    {
+        if (IsHost)
+            Rpc(MethodName.ApplySnapshot, snapshot);
+    }
+
+    [Rpc(MultiplayerApi.RpcMode.Authority, CallLocal = true)]
+    private void ApplySnapshot(byte[] snapshot) => SnapshotReceived?.Invoke(snapshot);
+
     // ---------- Отключения ----------
 
     private void OnPeerDisconnected(long peerId)
@@ -276,7 +355,9 @@ public partial class NetSession : Node
             return;
         if (_inGame)
         {
-            PeerLeft?.Invoke(peerId); // в забеге: GameManager уберёт героя через общее действие Leave
+            // В забеге: GameManager уберёт героя через общее действие Leave. Откладываем до конца кадра:
+            // прямо сейчас ENet ещё считает ушедшего получателем и ругается на отправку ему пакета
+            Callable.From(() => PeerLeft?.Invoke(peerId)).CallDeferred();
             _members.RemoveAll(member => member.PeerId == peerId);
             return;
         }

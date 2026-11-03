@@ -42,6 +42,8 @@ public partial class GameManager
         _net.ActionBroadcast += OnNetActionBroadcast;
         _net.PeerLeft += OnNetPeerLeft;
         _net.Disconnected += OnNetDisconnected;
+        _net.ResyncRequested += OnResyncRequested;
+        _net.SnapshotReceived += OnSnapshotReceived;
 
         _lobby = new LobbyPanel();
         AddChild(_lobby);
@@ -125,6 +127,8 @@ public partial class GameManager
         _actionInFlight = false;
         _afterLocalAction = null;
         _desyncs = 0;
+        _resyncs = 0;
+        _resyncPending = false;
 
         _heroOwners.Clear();
         var party = new List<HeroSpec>();
@@ -263,9 +267,107 @@ public partial class GameManager
     private void ReportDesync(int hostChecksum)
     {
         _desyncs++;
+        if (_resyncPending)
+            return; // снимок уже попросили — пока он идёт, остальные расхождения ожидаемы
         GD.Print($"СЕТЬ: РАССИНХРОН на раунде {_turns}: у хоста {hostChecksum:X8}, у нас {StateChecksum():X8}");
-        if (_desyncs == 1)
-            _hud.AddMessage("Внимание: мир на этом компьютере разошёлся с хостом. Лучше начать забег заново.", DamageColor);
+        _hud.AddMessage("Мир на этом компьютере разошёлся с хостом — восстанавливаем по данным хоста…", DamageColor);
+        _resyncPending = true;
+        _net.RequestResync();
+    }
+
+    // ---------- Восстановление после рассинхрона ----------
+
+    private bool _resyncPending;
+    private int _resyncs;
+
+    /// <summary>Хост: клиент просит снимок. Рассылаем его всем — восстановятся все одновременно.</summary>
+    private void OnResyncRequested(long peerId)
+    {
+        if (!_isNetworkGame || _gameOver)
+            return;
+        byte[] snapshot = SaveSystem.Pack(CreateNetworkSnapshot());
+        GD.Print($"СЕТЬ: хост: снимок мира для восстановления, {snapshot.Length} байт");
+        _net.BroadcastSnapshot(snapshot);
+    }
+
+    /// <summary>Снимок мира для сети: то же, что одиночное сохранение, плюс весь отряд и генератор случайности.</summary>
+    private SaveData CreateNetworkSnapshot()
+    {
+        var data = CreateSaveData();
+        data.Party = _heroes.Select(hero => new PartyHeroSave
+        {
+            Id = hero.Id,
+            Name = hero.DisplayName,
+            HasActed = hero.HasActed,
+            PendingLevelUps = hero.PendingLevelUps,
+            State = hero.CreateSave(),
+        }).ToList();
+        data.RngState = _rng.State;
+        data.RngCalls = _rng.Calls;
+        data.DescentRequested = _descentRequested;
+        return data;
+    }
+
+    private void OnSnapshotReceived(byte[] snapshot)
+    {
+        if (!_isNetworkGame)
+            return;
+        RestoreNetworkSnapshot(SaveSystem.Unpack(snapshot));
+        _resyncPending = false;
+        _resyncs++;
+        GD.Print($"СЕТЬ: {_netTestRole ?? "игра"}: мир восстановлен по снимку хоста, контрольная сумма {StateChecksum():X8}");
+        _hud.AddMessage("Мир восстановлен по данным хоста.", GoodColor);
+    }
+
+    /// <summary>
+    /// Пересобрать мир из снимка: отряд (с теми же номерами героев), карту, врагов, предметы,
+    /// генератор случайности. Своё окно (инвентарь, торговец) закрываем — его содержимое устарело.
+    /// </summary>
+    private void RestoreNetworkSnapshot(SaveData data)
+    {
+        int localId = _localHero.Id;
+        var bots = _heroes.ToDictionary(hero => hero.Id, hero => hero.IsBot);
+
+        ClearLevelObjects();
+        _floor = data.Floor;
+        _kills = data.Kills;
+        _turns = data.Turns;
+        _difficulty = Difficulties.Get(data.Difficulty);
+        _rng = GameRandom.FromState(data.RngState, data.RngCalls);
+        _descentRequested = data.DescentRequested;
+
+        var party = data.Party
+            .Select(save => new HeroSpec(ClassCatalog.Get(save.State.Class), save.Name, bots.GetValueOrDefault(save.Id)))
+            .ToList();
+        CreateParty(party, Math.Max(0, data.Party.FindIndex(save => save.Id == localId)));
+
+        _map = data.Map.ToMap();
+        _renderer.Build(_map);
+        ApplyTheme();
+        for (int i = 0; i < _heroes.Count; i++)
+        {
+            var hero = _heroes[i];
+            var save = data.Party[i];
+            hero.Id = save.Id;
+            hero.SetDisplayName(save.Name);
+            hero.RestoreSave(save.State, allowDead: true);
+            hero.HasActed = save.HasActed;
+            hero.PendingLevelUps = save.PendingLevelUps;
+        }
+        RestoreLevelObjects(data);
+
+        if (_state is GameState.Inventory or GameState.Shop or GameState.LevelUp)
+        {
+            _inventoryPanel.Visible = false;
+            _shopPanel.Visible = false;
+            _levelUpPanel.Visible = false;
+            _hud.Visible = true;
+            _state = GameState.Playing;
+        }
+        _camera.SnapToTarget();
+        UpdateFov();
+        UpdateHud();
+        TryShowLevelUp();
     }
 
     /// <summary>
@@ -307,6 +409,7 @@ public partial class GameManager
             Add(_floorItems.Count);
             Add(_chests.Count);
             Add(_merchant?.Stock.Count ?? -1);
+            Add(_descentRequested ? 1 : 0);
             return (int)(hash ^ (hash >> 32));
         }
     }
@@ -337,6 +440,8 @@ public partial class GameManager
             GameOver("отряд остался без живых героев");
             return;
         }
+        if (TryDescend())
+            return; // ушёл как раз тот, кого ждали у лестницы
         if (LivingHeroes.All(other => other.HasActed))
         {
             EndRound();

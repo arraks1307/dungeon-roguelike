@@ -26,6 +26,22 @@ public class SaveData
     public List<PickupSave> Pickups = new();
     public List<ChestSave> Chests = new();
     public MerchantSave Merchant;
+
+    // Только для сетевого снимка мира (в файл одиночного сохранения не попадают — там null и нули)
+    public List<PartyHeroSave> Party;
+    public ulong RngState;
+    public long RngCalls;
+    public bool DescentRequested;
+}
+
+/// <summary>Герой отряда в сетевом снимке: кто он, сходил ли в этом раунде и всё его состояние.</summary>
+public class PartyHeroSave
+{
+    public int Id;
+    public string Name;
+    public bool HasActed;
+    public int PendingLevelUps;
+    public PlayerSave State;
 }
 
 public class ChestSave
@@ -200,6 +216,25 @@ public static class SaveSystem
             GD.PushWarning($"Сохранение повреждено: {exception.Message}");
             return null;
         }
+    }
+
+    /// <summary>
+    /// Снимок мира для отправки по сети: JSON, сжатый GZip (карта из цифр сжимается в разы).
+    /// MemoryStream — поток в памяти, GZipStream сжимает всё, что в него пишут.
+    /// </summary>
+    public static byte[] Pack(SaveData data)
+    {
+        using var memory = new System.IO.MemoryStream();
+        using (var gzip = new System.IO.Compression.GZipStream(memory, System.IO.Compression.CompressionLevel.Fastest))
+            JsonSerializer.Serialize(gzip, data, Options);
+        return memory.ToArray();
+    }
+
+    public static SaveData Unpack(byte[] packed)
+    {
+        using var memory = new System.IO.MemoryStream(packed);
+        using var gzip = new System.IO.Compression.GZipStream(memory, System.IO.Compression.CompressionMode.Decompress);
+        return JsonSerializer.Deserialize<SaveData>(gzip, Options);
     }
 
     public static void Delete()

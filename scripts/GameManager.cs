@@ -14,6 +14,7 @@ public enum GameState
     LevelUp,
     Paused,
     GameOver,
+    Chat,      // пишем сообщение отряду: клавиши идут в строку чата, а не герою
 }
 
 /// <summary>Кто входит в отряд: класс, имя и (для самопроверки) управляет ли героем автопилот.</summary>
@@ -49,20 +50,15 @@ public partial class GameManager : Node3D, IGameWorld
     private float _partyHpPerHero = 0.6f;      // здоровье врагов: +60%
     private float _partyEnemiesPerHero = 0.3f; // число врагов на этаже: +30%
     private float _partyDamagePerHero = 0.1f;  // урон врагов: +10%
-    private float _partyGrowth = 0.2f;         // насколько каждый следующий герой «весит» больше предыдущего
 
     /// <summary>
-    /// «Вес» героев сверх первого. Выгода отряда растёт быстрее числа героев (больше урона,
-    /// опыт — всем), поэтому вес нарастающий: при _partyGrowth = 0.2 это 1 / 2.4 / 4.2 для 2 / 3 / 4 героев.
+    /// «Вес» героев сверх первого для отряда из 1, 2, 3, 4 героев. Выгода отряда растёт быстрее
+    /// числа героев (больше урона, опыт — всем), но не ровно: втроём оказалось заметно легче, чем
+    /// вчетвером. Поэтому вес задан таблицей, подобранной симуляциями (см. --party-weights).
     /// </summary>
-    private float ExtraHeroWeight
-    {
-        get
-        {
-            int extra = _heroes.Count - 1;
-            return extra + _partyGrowth * extra * (extra - 1);
-        }
-    }
+    private float[] _partyWeights = { 0f, 1f, 2.7f, 3.7f };
+
+    private float ExtraHeroWeight => _partyWeights[Math.Clamp(_heroes.Count - 1, 0, _partyWeights.Length - 1)];
 
     private static readonly Color DamageColor = new(1f, 0.45f, 0.4f);
     private static readonly Color GoodColor = new(0.5f, 1f, 0.5f);
@@ -252,6 +248,7 @@ public partial class GameManager : Node3D, IGameWorld
         _settingsMenu.Closed += OnSettingsClosed;
 
         SetupNetwork();
+        SetupCoop();
         ShowMainMenu();
         if (_netTestRole != null)
             StartNetTest();
@@ -278,6 +275,8 @@ public partial class GameManager : Node3D, IGameWorld
                 _camera.Zoom(-1);
             else if (mouse.ButtonIndex == MouseButton.WheelDown)
                 _camera.Zoom(1);
+            else if (mouse.ButtonIndex == MouseButton.Right && _isNetworkGame)
+                TryPing(mouse.Position);
             return;
         }
 
@@ -308,6 +307,9 @@ public partial class GameManager : Node3D, IGameWorld
                 else
                     CloseClassSelect();
                 break;
+            case Key.Enter or Key.KpEnter when _state == GameState.Playing && _isNetworkGame:
+                OpenChat();
+                break;
             case Key.F when _state == GameState.Playing:
                 PerformLocalAction(HeroAction.Skill(0));
                 break;
@@ -322,6 +324,7 @@ public partial class GameManager : Node3D, IGameWorld
                     case GameState.Inventory: CloseInventory(); break;
                     case GameState.Shop: CloseShop(); break;
                     case GameState.Paused: Resume(); break;
+                    case GameState.Chat: CloseChat(); break;
                     case GameState.GameOver: ShowMainMenu(); break;
                 }
                 break;
@@ -480,6 +483,8 @@ public partial class GameManager : Node3D, IGameWorld
         _hud.Visible = true;
         _hud.HideGameOver();
         _hud.ClearMessages();
+        _hud.CloseChat();
+        _hud.SetNetworkHints(_isNetworkGame);
         _camera.MenuMode = false;
 
         CreateParty(party, localIndex);
@@ -581,6 +586,7 @@ public partial class GameManager : Node3D, IGameWorld
         _shopPanel.Visible = false;
         _levelUpPanel.Visible = false;
         _settingsMenu.Visible = false;
+        _hud.CloseChat();
         _hud.Visible = true;
     }
 
@@ -627,6 +633,7 @@ public partial class GameManager : Node3D, IGameWorld
     private void NextFloor()
     {
         _floor++;
+        _descentRequested = false;
         ClearLevelObjects();
 
         bool bossFloor = _floor % BossFloorInterval == 0;
@@ -739,6 +746,8 @@ public partial class GameManager : Node3D, IGameWorld
             HeroActionKind.UseItem => UseItem(hero, action.Index),
             _ => false,
         };
+        if (spent && !_gameOver && _floor == floorBefore)
+            TryDescend(); // герой подошёл к лестнице, у которой его ждали
 
         // Не потратил ход, забег окончен или отряд уже на новом этаже (там начался новый раунд)
         if (!spent || _gameOver || _floor != floorBefore)
@@ -807,12 +816,7 @@ public partial class GameManager : Node3D, IGameWorld
         if (_gameOver || hero.IsGhost)
             return true; // погиб на шипах
         if (_map.Get(hero.GridPos) == Tile.Stairs)
-        {
-            _sound.Play(Sound.Stairs);
-            if (!IsSinglePlayer)
-                _hud.AddMessage($"{hero.DisplayName} находит лестницу — отряд спускается!", InfoColor);
-            NextFloor();
-        }
+            OnHeroReachedStairs(hero);
         return true;
     }
 
@@ -921,6 +925,7 @@ public partial class GameManager : Node3D, IGameWorld
         SearchSurroundings();
         UpdateFov();
         UpdateHud();
+        TryDescend(); // дальний герой мог погибнуть — тогда ждать больше некого
         TryShowLevelUp();
     }
 
@@ -1126,6 +1131,7 @@ public partial class GameManager : Node3D, IGameWorld
         foreach (var hero in _heroes)
             hero.UpdateNameplate(!IsSinglePlayer && !IsLocalHero(hero));
         _hud.SetWaiting(_localHero.HasActed && !_gameOver ? WaitingFor() : null);
+        _hud.SetStairsWaiting(StairsWaitingNames());
         _hud.UpdateBoss(_boss);
     }
 

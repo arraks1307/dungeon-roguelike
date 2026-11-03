@@ -1,4 +1,5 @@
 using System;
+using System.Linq;
 using Godot;
 
 namespace Roguelike;
@@ -24,6 +25,8 @@ public partial class GameManager
     private string _netTestName;
     private int _netTestRounds = 60;
     private int _netTestQuitAt = -1;        // клиент отключается на этом раунде (проверка ухода игрока)
+    private int _netTestDesyncAt = -1;      // клиент нарочно портит свой мир на этом раунде (проверка восстановления)
+    private bool _netTestDesynced;
     private bool _netTestDone;
     private ulong _netTestStartMs;
 
@@ -106,6 +109,15 @@ public partial class GameManager
             return;
         _netTestLastActionMs = Time.GetTicksMsec();
 
+        if (_netTestDesyncAt >= 0 && !_netTestDesynced && !_net.IsHost && _turns >= _netTestDesyncAt)
+        {
+            // «Ошибка» только на этом компьютере: лишнее золото и лишнее случайное число
+            _netTestDesynced = true;
+            _localHero.Gold += 7;
+            _rng.Next();
+            GD.Print($"СЕТЬ: {_netTestRole}: портим свой мир на раунде {_turns}");
+        }
+
         if (_netTestQuitAt >= 0 && !_net.IsHost && _turns >= _netTestQuitAt)
         {
             _netTestDone = true;
@@ -118,14 +130,26 @@ public partial class GameManager
 
         _netTestDone = true;
         GD.Print($"СЕТЬ: {_netTestRole}: раундов {_turns}, этаж {_floor}, убито {_kills}, героев {_heroes.Count}, " +
-                 $"случайных чисел {_rng.Calls}, контрольная сумма {StateChecksum():X8}, рассинхронов {_desyncs}" +
+                 $"случайных чисел {_rng.Calls}, контрольная сумма {StateChecksum():X8}, рассинхронов {_desyncs}, " +
+                 $"восстановлений {_resyncs}" +
                  (_gameOver ? " (забег окончен)" : ""));
         foreach (var hero in _heroes)
             GD.Print($"СЕТЬ: {_netTestRole}:   {hero.DisplayName} ({hero.Class.Name}) {hero.GridPos} здоровье {hero.Hp}/{hero.MaxHp} " +
                      $"ур. {hero.Level} золото {hero.Gold}{(hero.IsGhost ? " призрак" : "")}");
 
         if (_screenshotPath != null)
-            GetViewport().GetTexture().GetImage().SavePng(_screenshotPath);
+        {
+            // Для скриншота показываем чат и метку: пишем сообщение, отмечаем клетку рядом и ждём секунду
+            _net.SendChat("Иду к лестнице, прикройте!");
+            var near = DungeonMap.Directions.Select(d => _localHero.GridPos + d * 2).FirstOrDefault(_map.IsWalkable, _localHero.GridPos);
+            _net.SendPing(near);
+            GetTree().CreateTimer(1.2).Timeout += () =>
+            {
+                GetViewport().GetTexture().GetImage().SavePng(_screenshotPath);
+                GetTree().CreateTimer(2.0).Timeout += () => GetTree().Quit();
+            };
+            return;
+        }
         // Хост ждёт подольше, чтобы последние сообщения успели дойти до клиентов
         GetTree().CreateTimer(_net.IsHost ? 3.0 : 0.5).Timeout += () => GetTree().Quit();
     }

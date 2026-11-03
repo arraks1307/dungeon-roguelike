@@ -407,7 +407,8 @@ public partial class Player : Actor
         Equipped = Inventory.Equipped.Select(ItemSave.From).ToList(),
     };
 
-    public void RestoreSave(PlayerSave save)
+    /// <summary>allowDead — сохранить и нулевое здоровье (призрак в сетевом снимке мира).</summary>
+    public void RestoreSave(PlayerSave save, bool allowDead = false)
     {
         SetClass(ClassCatalog.Get(save.Class));
         Level = save.Level;
@@ -432,7 +433,7 @@ public partial class Player : Actor
             Inventory.Items.Add(item);
 
         RecalculateStats();
-        Hp = Mathf.Clamp(save.Hp, 1, MaxHp);
+        Hp = Mathf.Clamp(save.Hp, allowDead ? 0 : 1, MaxHp);
         BodyMaterial.AlbedoColor = DisplayColor;
         Teleport(new Vector2I(save.X, save.Y));
     }

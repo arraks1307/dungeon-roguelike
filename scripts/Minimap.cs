@@ -24,9 +24,34 @@ public partial class Minimap : Control
     private List<(Vector2I Cell, Color Color)> _items = new();
     private List<(Vector2I Cell, Color Color)> _allies = new();
 
+    private const double PingSeconds = 4.0;
+    private readonly List<(Vector2I Cell, Color Color, double Left)> _pings = new();
+
     public Minimap()
     {
         MouseFilter = MouseFilterEnum.Ignore;
+    }
+
+    public void AddPing(Vector2I cell, Color color)
+    {
+        _pings.Add((cell, color, PingSeconds));
+        QueueRedraw();
+    }
+
+    /// <summary>Пока есть метки, перерисовываемся каждый кадр — они мигают и гаснут.</summary>
+    public override void _Process(double delta)
+    {
+        if (_pings.Count == 0)
+            return;
+        for (int i = _pings.Count - 1; i >= 0; i--)
+        {
+            var ping = _pings[i];
+            if (ping.Left - delta <= 0)
+                _pings.RemoveAt(i);
+            else
+                _pings[i] = (ping.Cell, ping.Color, ping.Left - delta);
+        }
+        QueueRedraw();
     }
 
     public void UpdateData(DungeonMap map, HashSet<Vector2I> visible, Vector2I player,
@@ -71,6 +96,15 @@ public partial class Minimap : Control
             DrawCell(enemy, EnemyColor);
         foreach (var (cell, color) in _allies)
             DrawCell(cell, color); // союзники — цветом своего класса
+
+        // Метки: расходящееся кольцо, мигает примерно два раза в секунду
+        foreach (var (cell, color, left) in _pings)
+        {
+            float pulse = (float)(left * 2.0 % 1.0);
+            var center = new Vector2((cell.X + 0.5f) * CellSize, (cell.Y + 0.5f) * CellSize);
+            DrawArc(center, CellSize * (1.5f + 2.5f * (1f - pulse)), 0f, Mathf.Tau, 16, color, 1.5f);
+            DrawCell(cell, color);
+        }
 
         // Игрока рисуем чуть крупнее, чтобы его было легко найти
         DrawRect(new Rect2(_player.X * CellSize - 1, _player.Y * CellSize - 1, CellSize + 2, CellSize + 2), PlayerColor);

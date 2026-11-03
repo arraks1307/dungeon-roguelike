@@ -111,37 +111,7 @@ public partial class GameManager
             _localHero.RestoreSave(data.Player);
             UiTheme.SetAccent(_localHero.Class.Color.Lightened(0.15f));
             _camera.SnapToTarget();
-
-            foreach (var save in data.Enemies)
-            {
-                var type = Enemy.FindType(save.Type);
-                if (type == null)
-                    continue;
-                var enemy = SpawnEnemy(type, new Vector2I(save.X, save.Y));
-                enemy.RestoreState(save);
-                if (save.Boss)
-                    _boss = enemy;
-            }
-
-            foreach (var save in data.Pickups)
-            {
-                var cell = new Vector2I(save.X, save.Y);
-                var item = save.Item?.ToItem();
-                if (item != null)
-                    PlaceItem(item, cell);
-                else if (save.Gold > 0)
-                    PlaceGold(save.Gold, cell);
-            }
-
-            foreach (var save in data.Chests)
-                PlaceChest(new Vector2I(save.X, save.Y), save.Mimic, save.Secret);
-
-            if (data.Merchant != null)
-            {
-                var stock = data.Merchant.Stock.Select(s => s.ToItem()).Where(item => item != null).ToList();
-                _merchant = Merchant.Create(new Vector2I(data.Merchant.X, data.Merchant.Y), stock);
-                AddChild(_merchant);
-            }
+            RestoreLevelObjects(data);
             return true;
         }
         catch (Exception exception)
@@ -149,6 +119,41 @@ public partial class GameManager
             // Сохранение повреждено так, что восстановить мир нельзя — сообщаем и начинаем с меню
             GD.PushWarning($"Не удалось загрузить сохранение: {exception.Message}");
             return false;
+        }
+    }
+
+    /// <summary>Враги, предметы на полу, сундуки и торговец — из сохранения или сетевого снимка.</summary>
+    private void RestoreLevelObjects(SaveData data)
+    {
+        foreach (var save in data.Enemies)
+        {
+            var type = Enemy.FindType(save.Type);
+            if (type == null)
+                continue;
+            var enemy = SpawnEnemy(type, new Vector2I(save.X, save.Y));
+            enemy.RestoreState(save);
+            if (save.Boss)
+                _boss = enemy;
+        }
+
+        foreach (var save in data.Pickups)
+        {
+            var cell = new Vector2I(save.X, save.Y);
+            var item = save.Item?.ToItem();
+            if (item != null)
+                PlaceItem(item, cell);
+            else if (save.Gold > 0)
+                PlaceGold(save.Gold, cell);
+        }
+
+        foreach (var save in data.Chests)
+            PlaceChest(new Vector2I(save.X, save.Y), save.Mimic, save.Secret);
+
+        if (data.Merchant != null)
+        {
+            var stock = data.Merchant.Stock.Select(s => s.ToItem()).Where(item => item != null).ToList();
+            _merchant = Merchant.Create(new Vector2I(data.Merchant.X, data.Merchant.Y), stock);
+            AddChild(_merchant);
         }
     }
 }

@@ -77,6 +77,50 @@ public static class Effects
         parent.GetTree().CreateTimer(1.0).Timeout += particles.QueueFree;
     }
 
+    /// <summary>
+    /// Метка союзника на полу: светящийся столб и кольцо цвета его класса.
+    /// Несколько секунд пульсирует, потом тает. Видна сквозь стены (NoDepthTest).
+    /// </summary>
+    public static void Ping(Node3D parent, Vector2I cell, Color color)
+    {
+        if (!Enabled)
+            return;
+        var material = new StandardMaterial3D
+        {
+            AlbedoColor = new Color(color, 0.55f),
+            EmissionEnabled = true,
+            Emission = color,
+            EmissionEnergyMultiplier = 2f,
+            Transparency = BaseMaterial3D.TransparencyEnum.Alpha,
+            ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded,
+            NoDepthTest = true,
+        };
+        var ping = new Node3D { Position = Actor.GridToWorld(cell) };
+        ping.AddChild(new MeshInstance3D
+        {
+            Mesh = new CylinderMesh { TopRadius = 0.05f, BottomRadius = 0.05f, Height = 3f, Material = material },
+            Position = new Vector3(0f, 1.5f, 0f),
+            CastShadow = GeometryInstance3D.ShadowCastingSetting.Off,
+        });
+        var ring = new MeshInstance3D
+        {
+            Mesh = new TorusMesh { InnerRadius = 0.32f, OuterRadius = 0.42f, Material = material },
+            Position = new Vector3(0f, 0.05f, 0f),
+            CastShadow = GeometryInstance3D.ShadowCastingSetting.Off,
+        };
+        ping.AddChild(ring);
+        parent.AddChild(ping);
+
+        // Кольцо «дышит» три раза, затем вся метка гаснет и удаляется
+        var pulse = ring.CreateTween().SetLoops(3);
+        pulse.TweenProperty(ring, "scale", new Vector3(1.6f, 1f, 1.6f), 0.5f).SetTrans(Tween.TransitionType.Sine);
+        pulse.TweenProperty(ring, "scale", Vector3.One, 0.5f).SetTrans(Tween.TransitionType.Sine);
+        var fade = ping.CreateTween();
+        fade.TweenInterval(3.0);
+        fade.TweenProperty(material, "albedo_color:a", 0f, 0.8f);
+        fade.TweenCallback(Callable.From(ping.QueueFree));
+    }
+
     /// <summary>Стрела летит из одной клетки в другую.</summary>
     public static void Projectile(Node3D parent, Vector2I from, Vector2I to, Color color)
     {
