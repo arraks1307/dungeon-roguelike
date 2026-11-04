@@ -76,6 +76,18 @@ public partial class GameManager
                     OnHeroDied(hero, "ловушка с шипами");
                 break;
 
+            case TrapKind.Lava:
+                int burn = 3 + _floor / 2;
+                hero.TakeDamage(burn);
+                if (IsInvulnerable)
+                    hero.Heal(burn);
+                Effects.FloatingText(this, cell, $"-{burn}", DamageColor);
+                _sound.Play(Sound.Fire);
+                Tell(hero, $"Лава обжигает: -{burn}.", $"{hero.DisplayName} обжигается о лаву.", DamageColor);
+                if (hero.IsDead && !TryPhoenix(hero))
+                    OnHeroDied(hero, "лава");
+                break;
+
             case TrapKind.Alarm:
                 _map.Traps.Remove(cell);
                 foreach (var enemy in _enemies)

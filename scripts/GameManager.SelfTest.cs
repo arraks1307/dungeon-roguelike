@@ -34,6 +34,7 @@ public partial class GameManager
     private record SimResult(string Class, string Difficulty, int Floor, int Level, bool Victory, bool Timeout, int Turns);
 
     private int _tutorialTestShots;
+    private bool _metaLocked;          // в проверках прогресс не считается, кроме проверки самого прогресса
     private bool _simShop;             // в симуляции боты тратят золото на услуги торговца
     private int _simGoldScale = 1;     // боты подбирают мало золота: множитель, чтобы приблизиться к живому игроку
     private string _soundReportFolder; // куда записать WAV и напечатать числа о звуках
@@ -113,6 +114,7 @@ public partial class GameManager
                     "ranger" => ClassCatalog.Ranger,
                     "mage" => ClassCatalog.Mage,
                     "priest" => ClassCatalog.Priest,
+                    "rogue" => ClassCatalog.Rogue,
                     _ => null,
                 };
             else if (arg.StartsWith("--difficulty="))
@@ -191,6 +193,9 @@ public partial class GameManager
         {
             SaveSystem.FilePath = "user://selftest_save.json";
             SaveSystem.NetFilePath = "user://selftest_netsave.json";
+            Profile.FilePath = "user://selftest_profile.json";
+            Profile.Delete();
+            _metaLocked = _screenshotView != "world";
             SaveSystem.Delete();
         }
     }
@@ -231,11 +236,18 @@ public partial class GameManager
             RunTutorialTest();
             return;
         }
-        bool inMenu = _screenshotView is "menu" or "scores" or "classes" or "classconfirm" or "connect" or "lobby";
+        bool inMenu = _screenshotView is "legacy" or "menu" or "scores" or "classes" or "classconfirm" or "connect" or "lobby";
 
         if (_frame == 1)
         {
-            if (_testLoadSave != null)
+            if (_screenshotView == "legacy")
+            {
+                Profile.Current.Shards = 240;
+                Profile.Current.Seen.UnionWith(new[] { "Слизень", "Гоблин", "Громила", "Щитоносец" });
+                Profile.Current.Achievements.Add("floor5");
+                OpenLegacy();
+            }
+            else if (_testLoadSave != null)
             {
                 // Сохранение из другой версии игры: кладём в тестовый файл, загружаем кнопкой «Продолжить»
                 using (var file = FileAccess.Open(SaveSystem.FilePath, FileAccess.ModeFlags.Write))
@@ -313,6 +325,9 @@ public partial class GameManager
         {
             case "pause":
                 Pause();
+                break;
+            case "world":
+                RunWorldTest();
                 break;
             case "coop":
                 RunCoopTest();
@@ -480,6 +495,105 @@ public partial class GameManager
             .OrderBy(direction => distances[hero.GridPos + direction])
             .FirstOrDefault();
         PerformHeroAction(hero, HeroAction.Move(step));
+    }
+
+    /// <summary>Легендарные вещи, разбойник, условия этажа, странник, наследие.</summary>
+    private void RunWorldTest()
+    {
+        var hero = _localHero;
+        Vector2I Free() => DungeonMap.Directions.Select(d => hero.GridPos + d).First(c => _map.Get(c) == Tile.Floor && _map.CanMove(hero.GridPos, c) && !IsOccupied(c));
+        Enemy Place(string name)
+        {
+            foreach (var old in _enemies.ToList())
+            {
+                _enemies.Remove(old);
+                old.QueueFree();
+            }
+            return SpawnEnemy(Enemy.FindType(name), Free());
+        }
+        void Wear(LegendaryEffect effect)
+        {
+            var template = ItemCatalog.Legendaries.First(t => t.Effect == effect);
+            hero.Inventory.TryAdd(new Item(template, Rarity.Legendary));
+            hero.Equip(hero.Inventory.Items.FindIndex(item => item.Template == template));
+            hero.RefreshStats();
+        }
+
+        Wear(LegendaryEffect.Phoenix);
+        hero.Heal(hero.MaxHp);
+        var killer = Place("Мимик");
+        hero.TakeDamage(hero.Hp - 1);
+        EnemyAttacksPlayer(killer, hero, ranged: false);
+        GD.Print($"Мир: феникс: здоровье {hero.Hp}/{hero.MaxHp}, призрак {hero.IsGhost}, использован {hero.PhoenixUsed}");
+
+        Wear(LegendaryEffect.Storm);
+        var left = Place("Мимик");
+        var extra = SpawnEnemy(Enemy.FindType("Мимик"), Free());
+        int side = extra.Hp;
+        PerformHeroAction(hero, HeroAction.Move(left.GridPos - hero.GridPos));
+        int afterFirst = extra.Hp;
+        hero.StormCounter = 2; // следующий удар — третий
+        var second = Place("Мимик");
+        var neighbour = SpawnEnemy(Enemy.FindType("Мимик"), Free());
+        side = neighbour.Hp;
+        PerformHeroAction(hero, HeroAction.Move(second.GridPos - hero.GridPos));
+        GD.Print($"Мир: клинок бури: обычный удар не задел соседа ({afterFirst} из {extra.MaxHp}), третий задел: {side} → {neighbour.Hp}");
+
+        Wear(LegendaryEffect.Greed);
+        hero.Gold = 500;
+        GD.Print($"Мир: алчность при 500 золота: +{GreedBonus(hero)}");
+
+        Wear(LegendaryEffect.Shadow);
+        var weak = Place("Слизень");
+        weak.TakeDamage(weak.Hp - 1);
+        PerformHeroAction(hero, HeroAction.Move(weak.GridPos - hero.GridPos));
+        GD.Print($"Мир: плащ теней: после победы невидим {hero.IsInvisible}");
+
+        var rogue = new Player();
+        AddChild(rogue);
+        rogue.ResetStats(ClassCatalog.Rogue);
+        GD.Print($"Мир: разбойник: способности {rogue.Class.Skills[0].Name}, {rogue.Class.Skills[1].Name}, сумка {rogue.Inventory.Items.Count}");
+        rogue.QueueFree();
+
+        var cell = Free();
+        PlaceShrine(cell, ShrineKind.Wanderer, explained: false);
+        int gold = hero.Gold;
+        ApplyWanderer(hero, 0, cell);
+        GD.Print($"Мир: странник: золото {gold} → {hero.Gold}, остался {_shrines.ContainsKey(cell)}");
+
+        _condition = FloorCondition.Lava;
+        var lava = Free();
+        _map.Traps[lava] = new Trap { Kind = TrapKind.Lava, Revealed = true };
+        int hp = hero.Hp;
+        foreach (var old in _enemies.ToList())
+        {
+            _enemies.Remove(old);
+            old.QueueFree();
+        }
+        hero.Heal(hero.MaxHp);
+        hp = hero.Hp;
+        PerformHeroAction(hero, HeroAction.Move(lava - hero.GridPos));
+        GD.Print($"Мир: лава: здоровье {hp} → {hero.Hp}");
+        _condition = FloorCondition.None;
+
+        var enemy = Place("Слизень");
+        GD.Print($"Мир: подсказка: {TooltipFor(enemy.GridPos)?.Replace('\n', ' ')}");
+
+        Profile.Current.Shards = 100;
+        var vitality = Profile.Upgrades[0];
+        GD.Print($"Мир: покупка: {Profile.TryBuy(vitality)}, уровень {Profile.Level(vitality.Id)}, осколков {Profile.Current.Shards}");
+        _floor = 12;
+        _kills = 30;
+        GD.Print($"Мир: итоги: {FinishRun().Replace('\n', ' ')}");
+        Profile.Load();
+        GD.Print($"Мир: после перезагрузки: осколков {Profile.Current.Shards}, лучший этаж {Profile.Current.BestFloor}, достижений {Profile.Current.Achievements.Count}");
+        var check = new Player();
+        AddChild(check);
+        check.ResetStats(ClassCatalog.Warrior);
+        int baseHp = check.MaxHp;
+        ApplyLegacy(check);
+        GD.Print($"Мир: наследие: здоровье {baseHp} → {check.MaxHp}");
+        GetTree().Quit();
     }
 
     /// <summary>Приёмы отряда настоящими действиями. Нужен отряд из двух героев: --party=2.</summary>

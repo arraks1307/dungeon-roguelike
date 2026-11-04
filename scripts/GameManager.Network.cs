@@ -266,6 +266,9 @@ public partial class GameManager
             case HeroActionKind.GiveGold:
                 GiveGold(hero);
                 return false;
+            case HeroActionKind.Wanderer:
+                ApplyWanderer(hero, action.Index, action.Direction);
+                return false;
             case HeroActionKind.Leave:
                 SetHeroOffline(hero);
                 return false;
@@ -587,6 +590,7 @@ public partial class GameManager
             Add(_floorItems.Count);
             Add(_chests.Count);
             Add(_shrines.Count);
+            Add((int)_condition);
             Add(_plates.Count);
             Add(_merchant?.Stock.Count ?? -1);
             Add(_merchant?.Stock.Sum(item => (long)item.Price) ?? -1);

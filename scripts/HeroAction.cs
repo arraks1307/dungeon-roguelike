@@ -19,6 +19,7 @@ public enum HeroActionKind
     Mystery, // услуга: купить таинственный ларец
     GiveItem, // передать союзнику предмет из ячейки Index
     GiveGold, // передать союзнику золото
+    Wanderer, // выбор Index у странника в клетке Direction
     Leave,   // игрок отключился: герой ждёт его возвращения (присылает только хост)
     Rejoin,  // игрок вернулся (присылает только хост)
 }
@@ -43,6 +44,7 @@ public readonly record struct HeroAction(HeroActionKind Kind, Vector2I Direction
     public static HeroAction Mystery => new(HeroActionKind.Mystery);
     public static HeroAction GiveItem(int index) => new(HeroActionKind.GiveItem, Index: index);
     public static HeroAction GiveGold => new(HeroActionKind.GiveGold);
+    public static HeroAction Wanderer(int choice, Vector2I cell) => new(HeroActionKind.Wanderer, cell, choice);
     public static HeroAction Leave => new(HeroActionKind.Leave);
     public static HeroAction Rejoin => new(HeroActionKind.Rejoin);
 

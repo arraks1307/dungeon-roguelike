@@ -40,16 +40,18 @@ public partial class GameManager
             SkillId.FrostNova => FrostNova(hero),
             SkillId.Smite => Smite(hero),
             SkillId.Mend => Mend(hero),
+            SkillId.Backstab => Backstab(hero),
+            SkillId.Smoke => Smoke(hero),
             _ => false,
         };
         if (!used)
             return false;
 
         hero.StartCooldown(index);
-        if (skill.Id is not (SkillId.SecondWind or SkillId.Mend))
+        if (skill.Id is not (SkillId.SecondWind or SkillId.Mend or SkillId.Smoke))
             hero.ChargeSkills(except: index); // боевая способность — тоже атака: заряжает вторую
         _tutorialSkillUsed = true;
-        if (hero.IsInvisible && skill.Id != SkillId.SecondWind)
+        if (hero.IsInvisible && skill.Id is not (SkillId.SecondWind or SkillId.Smoke))
         {
             hero.BreakInvisibility();
             Tell(hero, "Способность выдаёт тебя — невидимость пропала.", $"{hero.DisplayName} выдаёт себя способностью.");
@@ -165,6 +167,30 @@ public partial class GameManager
             if (!enemy.IsDead)
                 enemy.Freeze(3, hero.Id);
         }
+        return true;
+    }
+
+    private bool Backstab(Player hero)
+    {
+        var target = _enemies.Where(enemy => _map.AreAdjacent(hero.GridPos, enemy.GridPos)).OrderBy(enemy => enemy.Hp).FirstOrDefault();
+        if (target == null)
+            return NoTargets(hero);
+        hero.PlayAttack(target.GridPos);
+        int damage = RollDamage(hero, target) * (hero.IsInvisible ? 3 : 2) + PerkBonusDamage(hero, target);
+        damage = ApplyTeamwork(hero, target, damage);
+        _sound.Play(Sound.Hit);
+        HitEnemy(target, damage, CritColor);
+        if (target.IsDead && hero.Has(PerkEffect.Assassin))
+            Array.Clear(hero.SkillCooldowns);
+        return true;
+    }
+
+    private bool Smoke(Player hero)
+    {
+        hero.ApplyInvisibility(3);
+        Effects.Burst(this, hero.GridPos, new Color(0.4f, 0.4f, 0.45f), 30);
+        _sound.Play(Sound.Teleport);
+        Tell(hero, "Дым скрывает тебя.", $"{hero.DisplayName} исчезает в дыму.", InfoColor);
         return true;
     }
 

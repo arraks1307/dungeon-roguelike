@@ -43,7 +43,7 @@ public static class MusicSynth
     public static float LoopSeconds => Progression.Length * ChordSeconds;
 
     /// <summary>Готовая запись: чередуются левый и правый каналы, значения от -1 до 1.</summary>
-    public static float[] Render()
+    public static float[] Render(bool battle = false)
     {
         int length = (int)(LoopSeconds * MixRate);
         var left = new float[length];
@@ -60,7 +60,10 @@ public static class MusicSynth
                 AddNote(left, right, start, ChordSeconds * 1.35f, Frequency(chord[voice]), 0.15f, pan, Warm, Pad);
             }
         }
-        AddMelody(left, right);
+        if (battle)
+            AddBattlePulse(left, right); // для боссов: тяжёлый пульс вместо мелодии
+        else
+            AddMelody(left, right);
 
         var samples = new float[length * 2];
         float peak = 0.0001f;
@@ -72,6 +75,19 @@ public static class MusicSynth
             samples[i * 2 + 1] = right[i] * 0.85f / peak;
         }
         return samples;
+    }
+
+    /// <summary>Боевой вариант: низкая нота бьёт четвертями, а каждая вторая доля — глухой удар.</summary>
+    private static void AddBattlePulse(float[] left, float[] right)
+    {
+        const float beat = 0.75f;
+        for (int i = 0; i < (int)(LoopSeconds / beat); i++)
+        {
+            var chord = Progression[(int)(i * beat / ChordSeconds)];
+            AddNote(left, right, i * beat, 0.9f, Frequency(chord[0] + 12), 0.5f, 0f, Bass, Pluck);
+            if (i % 2 == 0)
+                AddNote(left, right, i * beat, 0.5f, 62f, 0.8f, 0f, Bass, Pluck);
+        }
     }
 
     /// <summary>

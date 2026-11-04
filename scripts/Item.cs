@@ -37,6 +37,17 @@ public enum Rarity
     Common,
     Rare,
     Epic,
+    Legendary,
+}
+
+/// <summary>Особое правило легендарной вещи.</summary>
+public enum LegendaryEffect
+{
+    None,
+    Storm,   // каждая третья атака бьёт всех вокруг
+    Greed,   // золото превращается в урон
+    Phoenix, // раз за этаж спасает от смерти
+    Shadow,  // после победы герой исчезает на два хода
 }
 
 /// <summary>
@@ -86,7 +97,8 @@ public readonly record struct Stats(
 /// Weight — относительная частота появления, Price — базовая цена у торговца.
 /// </summary>
 public record ItemTemplate(
-    string Name, ItemKind Kind, Stats Stats, int Power, Color Color, int MinFloor, int Weight, int Price)
+    string Name, ItemKind Kind, Stats Stats, int Power, Color Color, int MinFloor, int Weight, int Price,
+    LegendaryEffect Effect = LegendaryEffect.None, string Special = null)
 {
     public EquipSlot Slot => Kind switch
     {
@@ -142,6 +154,7 @@ public class Item
     {
         Rarity.Rare => new Color(0.45f, 0.7f, 1f),
         Rarity.Epic => new Color(0.8f, 0.5f, 1f),
+        Rarity.Legendary => new Color(1f, 0.6f, 0.15f),
         _ => new Color(0.92f, 0.92f, 0.92f),
     };
 
@@ -150,6 +163,7 @@ public class Item
     {
         Rarity.Rare => "редкая",
         Rarity.Epic => "эпическая",
+        Rarity.Legendary => "легендарная",
         _ => "обычная",
     };
 
@@ -252,6 +266,17 @@ public static class ItemCatalog
     public static readonly ItemTemplate MapScroll = new("Свиток карты", ItemKind.MapScroll, default, 0, new Color(0.85f, 0.8f, 0.5f), 1, 6, 15);
     public static readonly ItemTemplate Bomb = new("Бомба", ItemKind.Bomb, default, 10, new Color(0.3f, 0.3f, 0.35f), 2, 7, 20);
 
+    // Легендарные вещи не выпадают обычным путём: их дают боссы, ларцы и алтари
+    public static readonly ItemTemplate[] Legendaries =
+    {
+        new("Клинок бури", ItemKind.Weapon, new Stats(Attack: 6), 0, new Color(0.5f, 0.75f, 1f), 1, 0, 300, LegendaryEffect.Storm, "Каждая третья атака задевает всех врагов вокруг."),
+        new("Кольцо алчности", ItemKind.Ring, new Stats(Crit: 5), 0, new Color(1f, 0.8f, 0.2f), 1, 0, 300, LegendaryEffect.Greed, "+1 к удару за каждые 100 золота (до +8)."),
+        new("Амулет феникса", ItemKind.Amulet, new Stats(MaxHp: 10), 0, new Color(1f, 0.45f, 0.1f), 1, 0, 300, LegendaryEffect.Phoenix, "Раз за этаж спасает от смерти."),
+        new("Плащ теней", ItemKind.Armor, new Stats(Defense: 3), 0, new Color(0.3f, 0.25f, 0.4f), 1, 0, 300, LegendaryEffect.Shadow, "После победы над врагом ты исчезаешь на два хода."),
+    };
+
+    public static Item RollLegendary(Random rng) => new(Legendaries[rng.Next(Legendaries.Length)], Rarity.Legendary);
+
     public static readonly ItemTemplate[] All =
     {
         Dagger, Sword, Axe, Rapier, LeatherArmor, ChainMail, PlateArmor, LeatherCap, IronHelmet,
@@ -271,6 +296,10 @@ public static class ItemCatalog
         new("остроты", new Stats(Attack: 2)),
         new("зоркости", new Stats(Vision: 2)),
         new("исцеления", new Stats(Regen: 1)),
+        // Проклятые свойства: сильный плюс и ощутимый минус, решай сам
+        new("кровопийцы", new Stats(Attack: 4, MaxHp: -10)),
+        new("безумия", new Stats(Crit: 25, Defense: -2)),
+        new("слепца", new Stats(Attack: 3, Vision: -3)),
     };
 
     /// <summary>
@@ -330,6 +359,8 @@ public static class ItemInfo
         {
             foreach (var (_, line) in item.Stats.DescribeSigned())
                 text.Append(line).Append('\n');
+            if (item.Template.Special != null)
+                text.Append(Colored(item.Template.Special, item.RarityColor)).Append('\n');
 
             // Сравнение с тем, что сейчас надето в этот же слот
             var equipped = inventory.GetEquipped(item.Slot);

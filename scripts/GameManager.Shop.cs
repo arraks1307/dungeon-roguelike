@@ -126,7 +126,7 @@ public partial class GameManager
         if (!TryPay(hero, MysteryPrice))
             return;
 
-        var item = RollEquipment(_floor + MysteryBonusFloors);
+        var item = _rng.NextDouble() < LegendaryBoxChance ? ItemCatalog.RollLegendary(_rng) : RollEquipment(_floor + MysteryBonusFloors);
         hero.Inventory.TryAdd(item);
         _sound.Play(Sound.Chest);
         if (ShopOpenFor(hero))

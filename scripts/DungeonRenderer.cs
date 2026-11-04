@@ -266,7 +266,11 @@ public partial class DungeonRenderer : Node3D
     private static Node3D CreateTrap(TrapKind kind)
     {
         var root = new Node3D();
-        if (kind == TrapKind.Spikes)
+        if (kind == TrapKind.Lava)
+        {
+            root.AddChild(Mesh(new BoxMesh { Size = new Vector3(0.96f, 0.04f, 0.96f) }, new Color(1f, 0.4f, 0.05f), new Vector3(0f, 0.02f, 0f), glow: 2.5f));
+        }
+        else if (kind == TrapKind.Spikes)
         {
             root.AddChild(Mesh(new BoxMesh { Size = new Vector3(0.8f, 0.04f, 0.8f) }, new Color(0.2f, 0.2f, 0.22f), new Vector3(0f, 0.02f, 0f)));
             foreach (var offset in new[] { new Vector2(-0.2f, -0.2f), new Vector2(0.2f, -0.2f), new Vector2(-0.2f, 0.2f), new Vector2(0.2f, 0.2f) })

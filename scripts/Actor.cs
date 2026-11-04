@@ -159,6 +159,27 @@ public partial class Actor : Node3D
         Position = GridToWorld(p);
     }
 
+    private Tween _turnTween;
+    private float _facing;
+
+    /// <summary>Плавно развернуться в сторону движения или удара.</summary>
+    private void Face(Vector2I direction)
+    {
+        if (Body == null || direction == Vector2I.Zero || Settings.AnimationScale == 0f || !Effects.Enabled)
+            return;
+        float from = _facing;
+        float to = Mathf.Atan2(direction.X, direction.Y);
+        _turnTween?.Kill();
+        _turnTween = CreateTween();
+        _turnTween.TweenMethod(Callable.From<float>(t =>
+        {
+            _facing = Mathf.LerpAngle(from, to, t);
+            ApplyFacing(_facing);
+        }), 0f, 1f, 0.12f * Settings.AnimationScale);
+    }
+
+    protected virtual void ApplyFacing(float angle) => Body.Rotation = new Vector3(0f, angle, 0f);
+
     /// <summary>Идёт непрерывная ходьба: шаги перетекают друг в друга с постоянной скоростью.</summary>
     protected virtual bool ContinuousMove => false;
 
@@ -168,6 +189,7 @@ public partial class Actor : Node3D
     /// </summary>
     public void MoveTo(Vector2I p)
     {
+        Face(p - GridPos);
         GridPos = p;
         _moveTween?.Kill();
         if (Settings.AnimationScale == 0f || !Effects.Enabled)
@@ -190,6 +212,7 @@ public partial class Actor : Node3D
     /// <summary>Анимация удара: тело дёргается в сторону цели и возвращается.</summary>
     public void PlayAttack(Vector2I target)
     {
+        Face(target - GridPos);
         var offset = new Vector3(target.X - GridPos.X, 0f, target.Y - GridPos.Y) * 0.35f;
         _attackTween?.Kill();
         Body.Position = _bodyRestPosition;

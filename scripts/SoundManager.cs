@@ -109,16 +109,38 @@ public partial class SoundManager : Node
         StartAmbience();
         Task.Run(() =>
         {
-            var data = ToBytes(MusicSynth.Render());
-            Callable.From(() => StartMusic(data)).CallDeferred(); // узлы трогаем только из главного потока
+            var calm = ToBytes(MusicSynth.Render());
+            var battle = ToBytes(MusicSynth.Render(battle: true));
+            Callable.From(() => StartMusic(calm, battle)).CallDeferred(); // узлы трогаем только из главного потока
         });
     }
 
-    private void StartMusic(byte[] data)
+    private AudioStreamPlayer _calmMusic;
+    private AudioStreamPlayer _battleMusic;
+    private bool _battle;
+
+    /// <summary>Босс заметил отряд: спокойная петля уходит, боевая проявляется. Обе идут вместе, поэтому в такт.</summary>
+    public void SetBattle(bool battle)
+    {
+        if (battle == _battle || _calmMusic == null)
+            return;
+        _battle = battle;
+        var tween = CreateTween().SetParallel(true);
+        tween.TweenProperty(_calmMusic, "volume_db", battle ? SilentDb : MusicVolumeDb, 1.5f);
+        tween.TweenProperty(_battleMusic, "volume_db", battle ? MusicVolumeDb : SilentDb, 1.5f);
+    }
+
+    private const float SilentDb = -50f;
+
+    private void StartMusic(byte[] data, byte[] battle)
     {
         var player = new AudioStreamPlayer { Stream = ToMusicStream(data), Bus = MusicBus, VolumeDb = -40f };
         AddChild(player);
         player.Play();
+        _calmMusic = player;
+        _battleMusic = new AudioStreamPlayer { Stream = ToMusicStream(battle), Bus = MusicBus, VolumeDb = SilentDb };
+        AddChild(_battleMusic);
+        _battleMusic.Play();
         GD.Print($"Музыка: запущена, {data.Length / 1024 / 1024} МБ");
         // Музыка плавно проявляется, а не включается щелчком
         CreateTween().TweenProperty(player, "volume_db", MusicVolumeDb, 4f).SetTrans(Tween.TransitionType.Sine).SetEase(Tween.EaseType.Out);

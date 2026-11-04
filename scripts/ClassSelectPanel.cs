@@ -136,7 +136,7 @@ public partial class ClassSelectPanel : CanvasLayer
 
         var card = new Button
         {
-            CustomMinimumSize = new Vector2(280f, 340f),
+            CustomMinimumSize = new Vector2(226f, 380f),
             Text = $"{playerClass.Name}\n\n{playerClass.Description}\n\n" +
                    $"Здоровье: {playerClass.MaxHp}   Атака: {playerClass.Attack}\n" +
                    $"С собой: {start}\n\n{skills}",
@@ -144,7 +144,7 @@ public partial class ClassSelectPanel : CanvasLayer
             Alignment = HorizontalAlignment.Left,
             VerticalIconAlignment = VerticalAlignment.Top,
         };
-        card.AddThemeFontSizeOverride("font_size", 15);
+        card.AddThemeFontSizeOverride("font_size", 14);
         card.AddThemeColorOverride("font_color", playerClass.Color.Lightened(0.35f));
         card.AddThemeColorOverride("font_focus_color", playerClass.Color.Lightened(0.6f));
         card.AddThemeColorOverride("font_hover_color", playerClass.Color.Lightened(0.6f));

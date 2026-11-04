@@ -11,6 +11,7 @@ public enum PlayerClass
     Ranger,
     Mage,
     Priest,
+    Rogue,
 }
 
 public enum SkillId
@@ -23,6 +24,8 @@ public enum SkillId
     FrostNova,
     Smite,
     Mend,
+    Backstab,
+    Smoke,
 }
 
 /// <summary>Активная способность: срабатывает по клавише F или G и потом перезаряжается за Cooldown атак героя.</summary>
@@ -51,6 +54,7 @@ public enum PerkEffect
     Grace,     // исцеление лечит ещё и всех рядом с целью
     Faith,     // кара бьёт сильнее и лечит вдвое больше
     Shatter,   // заморозка мага делает врага хрупким и для него самого
+    Assassin,  // убийство заряжает способности сразу
 }
 
 public static class ClassCatalog
@@ -99,7 +103,18 @@ public static class ClassCatalog
             new SkillDef(SkillId.Mend, "Исцеление", "лечит самого раненого героя отряда на 35%", 3),
         });
 
-    public static readonly ClassDef[] All = { Warrior, Ranger, Mage, Priest };
+    public static readonly ClassDef Rogue = new(
+        PlayerClass.Rogue, "Разбойник",
+        "Бьёт из тени: чем незаметнее, тем страшнее удар.",
+        MaxHp: 28, Attack: 4, new Color(0.65f, 0.5f, 0.85f),
+        new[] { ItemCatalog.Dagger, ItemCatalog.HealthPotion, ItemCatalog.InvisibilityPotion },
+        new[]
+        {
+            new SkillDef(SkillId.Backstab, "Удар в спину", "вдвое сильнее, из невидимости втрое", 2),
+            new SkillDef(SkillId.Smoke, "Дымовая завеса", "невидимость на 3 хода", 4),
+        });
+
+    public static readonly ClassDef[] All = { Warrior, Ranger, Mage, Priest, Rogue };
 
     public static ClassDef Get(PlayerClass playerClass) => All[(int)playerClass];
 
@@ -123,6 +138,7 @@ public static class ClassCatalog
         new("Охотник", "+4 к удару по невредимому врагу", default, Only: PlayerClass.Ranger, Effect: PerkEffect.Hunter),
         new("Пиромант", "огненный шар взрывается шире", default, Only: PlayerClass.Mage, Effect: PerkEffect.Pyromancer),
         new("Ледяной осколок", "замороженные враги получают от тебя двойной урон", default, Only: PlayerClass.Mage, Effect: PerkEffect.Shatter),
+        new("Убийца", "убийство заряжает все способности полностью", default, Only: PlayerClass.Rogue, Effect: PerkEffect.Assassin),
         new("Благодать", "исцеление лечит и всех рядом с целью", default, Only: PlayerClass.Priest, Effect: PerkEffect.Grace),
         new("Свет веры", "+3 к урону кары, и лечит она вдвое сильнее", default, Only: PlayerClass.Priest, Effect: PerkEffect.Faith),
     };

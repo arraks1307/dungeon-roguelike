@@ -7,6 +7,7 @@ public enum ShrineKind
     Fountain,   // бесплатно лечит половину здоровья
     BloodAltar, // забирает треть здоровья, навсегда даёт +1 к атаке
     GoldAltar,  // за золото даёт хорошую экипировку
+    Wanderer,   // странник предлагает выбор
 }
 
 /// <summary>
@@ -28,6 +29,7 @@ public partial class Shrine : Node3D
     {
         ShrineKind.Fountain => new Color(0.35f, 0.7f, 1f),
         ShrineKind.BloodAltar => new Color(0.9f, 0.1f, 0.15f),
+        ShrineKind.Wanderer => new Color(0.5f, 1f, 0.6f),
         _ => new Color(1f, 0.8f, 0.25f),
     };
 

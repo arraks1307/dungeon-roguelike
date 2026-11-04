@@ -73,6 +73,21 @@ public partial class Enemy : Actor
     /// <summary>Босс этажа: 5 — Король орков, 10 — Некромант, 15 — Владыка бездны.</summary>
     public static EnemyType BossForFloor(int floor) => Bosses[Math.Clamp(floor / 5 - 1, 0, Bosses.Length - 1)];
 
+    /// <summary>Что враг умеет — для подсказки при наведении и бестиария.</summary>
+    public static string Describe(EnemyType type) => type.Behavior switch
+    {
+        EnemyBehavior.Archer => "Стреляет издалека и держит дистанцию.",
+        EnemyBehavior.Ghost => "Летает сквозь стены и чует героев.",
+        EnemyBehavior.Boss => "Босс: зовёт помощников и бьёт по площади.",
+        EnemyBehavior.Necromancer => "Босс: держит дистанцию и поднимает скелетов.",
+        EnemyBehavior.Overlord => "Финальный босс: на половине здоровья впадает в ярость.",
+        EnemyBehavior.Brute => "Замахивается на клетку: отойди или встань в стойку.",
+        EnemyBehavior.Bomber => "Рядом поджигает фитиль и взрывается: убей или отбеги.",
+        EnemyBehavior.Shieldbearer => "Щит держит удары. Бей после его атаки, с фланга или магией.",
+        EnemyBehavior.Shaman => "Лечит других врагов: убей первым.",
+        _ => type.Slow ? "Медленный: ходит через ход." : "Идёт к цели и бьёт вплотную.",
+    };
+
     public EnemyType Type { get; private set; }
     public bool IsBoss => Type.Behavior is EnemyBehavior.Boss or EnemyBehavior.Necromancer or EnemyBehavior.Overlord;
     public bool IsFinalBoss => Type.Behavior == EnemyBehavior.Overlord;
@@ -220,8 +235,8 @@ public partial class Enemy : Actor
 
     private void CreateShield()
     {
-        _shield = Part(new BoxMesh { Size = new Vector3(0.62f, 0.72f, 0.08f) }, new Color(0.8f, 0.85f, 0.95f), new Vector3(0f, 0.42f, 0.4f), glow: 0.3f);
-        AddChild(_shield);
+        _shield = Part(new BoxMesh { Size = new Vector3(0.62f, 0.72f, 0.08f) }, new Color(0.8f, 0.85f, 0.95f), new Vector3(0f, 0.02f, 0.4f), glow: 0.3f);
+        Body.AddChild(_shield); // на теле: поворачивается вместе с ним
         SetShield(true);
     }
 

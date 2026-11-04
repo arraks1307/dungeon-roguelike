@@ -51,6 +51,7 @@ public partial class GameManager
             }).ToList(),
             Chests = _chests.Values.Select(chest => chest.CreateSave()).ToList(),
             Shrines = _shrines.Values.Select(shrine => shrine.CreateSave()).ToList(),
+            Condition = _condition,
         };
 
         if (_merchant != null)
@@ -127,6 +128,7 @@ public partial class GameManager
     /// <summary>Враги, предметы на полу, сундуки и торговец — из сохранения или сетевого снимка.</summary>
     private void RestoreLevelObjects(SaveData data)
     {
+        _condition = data.Condition;
         foreach (var save in data.Enemies)
         {
             var type = Enemy.FindType(save.Type);

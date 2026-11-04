@@ -27,6 +27,7 @@ public class SaveData
     public List<ChestSave> Chests = new();
     public MerchantSave Merchant;
     public List<ShrineSave> Shrines = new();
+    public FloorCondition Condition;
 
     // Только для сетевого снимка мира (в файл одиночного сохранения не попадают — там null и нули)
     public List<PartyHeroSave> Party;
@@ -90,7 +91,7 @@ public class ItemSave
     /// <summary>Восстановить предмет по названиям. null — если такого шаблона больше нет в игре.</summary>
     public Item ToItem()
     {
-        var template = ItemCatalog.All.FirstOrDefault(t => t.Name == Template);
+        var template = ItemCatalog.All.Concat(ItemCatalog.Legendaries).FirstOrDefault(t => t.Name == Template);
         if (template == null)
             return null;
         var affixes = Affixes

@@ -37,6 +37,8 @@ public partial class Hud : CanvasLayer
     private LineEdit _chatEdit;
     private readonly Dictionary<ProgressBar, Tween> _barTweens = new();
     private ColorRect _fade;
+    private PanelContainer _tooltip;
+    private Label _tooltipLabel;
     private Tween _fadeTween;
     private PanelContainer _tutorialCard;
     private Label _tutorialProgress;
@@ -132,6 +134,13 @@ public partial class Hud : CanvasLayer
         CreateBossBar(root);
         CreateTutorialCard(root);
         CreateGameOverScreen(root);
+
+        // Подсказка у курсора: что находится в этой клетке
+        _tooltip = new PanelContainer { Visible = false, MouseFilter = Control.MouseFilterEnum.Ignore };
+        _tooltip.AddThemeStyleboxOverride("panel", UiTheme.Glass(0.85f, 10, 8f));
+        _tooltipLabel = Ui.CreateLabel(15);
+        _tooltip.AddChild(_tooltipLabel);
+        root.AddChild(_tooltip);
 
         // Затемнение при смене этажа — последним, поверх всего HUD; клики сквозь него проходят
         _fade = new ColorRect { Color = Colors.Black, Visible = false, MouseFilter = Control.MouseFilterEnum.Ignore };
@@ -375,6 +384,18 @@ public partial class Hud : CanvasLayer
             rows.AddChild(bar);
         }
     }
+
+    public void ShowTooltip(string text, Vector2 mouse)
+    {
+        _tooltipLabel.Text = text;
+        _tooltip.Visible = true;
+        _tooltip.ResetSize();
+        var screen = _tooltip.GetViewportRect().Size;
+        var size = _tooltip.Size;
+        _tooltip.Position = new Vector2(Mathf.Min(mouse.X + 18f, screen.X - size.X - 8f), Mathf.Min(mouse.Y + 18f, screen.Y - size.Y - 8f));
+    }
+
+    public void HideTooltip() => _tooltip.Visible = false;
 
     /// <summary>Полоска плавно доезжает до нового значения, а не прыгает к нему.</summary>
     private void SetBar(ProgressBar bar, double value, double max)

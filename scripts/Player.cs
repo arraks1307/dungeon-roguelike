@@ -19,6 +19,13 @@ public partial class Player : Actor
     private const double HoldDelay = 0.3;
     private const double WalkInterval = 0.15;
 
+    protected override void ApplyFacing(float angle)
+    {
+        base.ApplyFacing(angle);
+        if (_gear != null && _gear.GetParent() != Body)
+            _gear.Rotation = new Vector3(0f, angle, 0f);
+    }
+
     protected override bool ContinuousMove => _heldKey != Key.None && !_walkStopped;
 
     /// <summary>Нажатие клавиши: шаг, атака или (Vector2I.Zero) пропуск хода. Одно нажатие — одно действие.</summary>
@@ -54,6 +61,10 @@ public partial class Player : Actor
 
     // Отряд: подъём союзника, силы призрака и итоги забега
     public int ReviveProgress { get; set; }
+
+    public int StormCounter { get; set; }
+    public bool PhoenixUsed { get; set; }
+    public bool HasLegendary(LegendaryEffect effect) => Inventory.Equipped.Any(item => item.Template.Effect == effect);
 
     /// <summary>Игрок потерял связь: герой стоит на месте и ждёт, враги его не трогают.</summary>
     public bool IsOffline { get; set; }
@@ -259,6 +270,12 @@ public partial class Player : Actor
                 _gear.AddChild(Part(new BoxMesh { Size = new Vector3(0.12f, 0.36f, 0.12f) }, wood.Darkened(0.2f), new Vector3(-0.12f, 0.15f, -0.24f), rotationDegrees: new Vector3(15f, 0f, 0f)));
                 break;
 
+            case PlayerClass.Rogue:
+                _gear.AddChild(Part(new SphereMesh { Radius = 0.18f, Height = 0.32f }, dark, new Vector3(0f, 0.6f, -0.03f)));
+                _gear.AddChild(Part(new BoxMesh { Size = new Vector3(0.04f, 0.34f, 0.03f) }, steel, new Vector3(0.3f, 0.02f, 0.12f), rotationDegrees: new Vector3(0f, 0f, -25f)));
+                _gear.AddChild(Part(new BoxMesh { Size = new Vector3(0.04f, 0.34f, 0.03f) }, steel, new Vector3(-0.3f, 0.02f, 0.12f), rotationDegrees: new Vector3(0f, 0f, 25f)));
+                break;
+
             case PlayerClass.Priest:
                 _gear.AddChild(Part(new TorusMesh { InnerRadius = 0.17f, OuterRadius = 0.2f }, Class.Color.Lightened(0.3f), new Vector3(0f, 0.8f, 0f), glow: 2.5f));
                 _gear.AddChild(Part(new BoxMesh { Size = new Vector3(0.05f, 0.9f, 0.05f) }, wood, new Vector3(0.32f, 0.08f, 0.04f)));
@@ -352,6 +369,12 @@ public partial class Player : Actor
     public IEnumerable<Perk> Perks => _perks;
 
     /// <summary>Постоянная прибавка к атаке (алтарь крови). Хранится в базовой атаке, поэтому попадает в сохранение.</summary>
+    public void AddPermanentHp(int amount)
+    {
+        _baseMaxHp += amount;
+        RecalculateStats();
+    }
+
     public void AddPermanentAttack(int amount)
     {
         _baseAttack += amount;

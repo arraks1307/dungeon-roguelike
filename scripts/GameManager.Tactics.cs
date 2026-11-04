@@ -119,6 +119,7 @@ public partial class GameManager
     /// <summary>Побочные эффекты улучшений после удара оружием.</summary>
     private void ApplyMeleePerks(Player hero, Enemy target, int damage)
     {
+        ApplyLegendaryOnHit(hero, damage);
         if (!hero.Has(PerkEffect.Cleave))
             return;
         foreach (var other in _enemies.Where(other => other != target && _map.AreAdjacent(hero.GridPos, other.GridPos)).ToList())
@@ -132,6 +133,7 @@ public partial class GameManager
             bonus += (hero.MaxHp - hero.Hp) * 4 / hero.MaxHp; // +1 за каждую потерянную четверть здоровья
         if (hero.Has(PerkEffect.Hunter) && target.Hp == target.MaxHp)
             bonus += 4;
+        bonus += GreedBonus(hero);
         return bonus;
     }
 
@@ -144,7 +146,7 @@ public partial class GameManager
         int count = (_rng.NextDouble() < 0.6 ? 1 : 0) + (_floor % 3 == 0 ? 1 : 0);
         for (int i = 0; i < count; i++)
             if (TryFindFreeCell(out var cell))
-                PlaceShrine(cell, (ShrineKind)_rng.Next(3), explained: false);
+                PlaceShrine(cell, (ShrineKind)_rng.Next(4), explained: false);
     }
 
     private void PlaceShrine(Vector2I cell, ShrineKind kind, bool explained)
@@ -159,6 +161,7 @@ public partial class GameManager
     private string ShrineText(Shrine shrine) => shrine.Kind switch
     {
         ShrineKind.Fountain => "Фонтан: лечит половину здоровья.",
+        ShrineKind.Wanderer => "Странник предложит выбор.",
         ShrineKind.BloodAltar => IsSinglePlayer ? "Алтарь крови: заберёт треть здоровья и навсегда даст +1 к атаке." : "Алтарь крови: у всего отряда заберёт треть здоровья и навсегда даст +1 к атаке. Нужны голоса всех.",
         _ => $"Золотой алтарь: за {GoldAltarPrice} золота даст хорошую вещь.",
     };
@@ -166,6 +169,11 @@ public partial class GameManager
     /// <summary>Шаг в святыню: первый раз — описание, второй — сделка. true — ход потрачен.</summary>
     private bool UseShrine(Player hero, Shrine shrine)
     {
+        if (shrine.Kind == ShrineKind.Wanderer)
+        {
+            OpenWanderer(hero, shrine);
+            return false;
+        }
         if (!shrine.Explained)
         {
             shrine.Explained = true;
@@ -227,7 +235,7 @@ public partial class GameManager
                     return false;
                 }
                 hero.Gold -= GoldAltarPrice;
-                var item = RollEquipment(_floor + 5);
+                var item = _rng.NextDouble() < LegendaryBoxChance ? ItemCatalog.RollLegendary(_rng) : RollEquipment(_floor + 5);
                 hero.Inventory.TryAdd(item);
                 _sound.Play(Sound.Chest);
                 Tell(hero, $"Алтарь дарит: {item.Name}.", $"{hero.DisplayName} получает: {item.Name}.", item.RarityColor);

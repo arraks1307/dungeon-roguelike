@@ -9,7 +9,7 @@ namespace Roguelike;
 /// </summary>
 public partial class MainMenu : CanvasLayer
 {
-    public const string Version = "v1.7";
+    public const string Version = "v1.8";
 
     private static readonly Color VictoryColor = new(1f, 0.82f, 0.4f);
 
@@ -17,6 +17,7 @@ public partial class MainMenu : CanvasLayer
     public event Action ContinueRequested;
     public event Action SettingsRequested;
     public event Action NetworkRequested;
+    public event Action LegacyRequested;
 
     private Button _continueButton;
     private VBoxContainer _mainPage;
@@ -62,6 +63,7 @@ public partial class MainMenu : CanvasLayer
         _continueButton = CreateMenuButton("Продолжить", () => ContinueRequested?.Invoke());
         _newGameButton = CreateMenuButton("Новая игра", () => NewGameRequested?.Invoke());
         CreateMenuButton("Сетевая игра", () => NetworkRequested?.Invoke());
+        CreateMenuButton("Наследие", () => LegacyRequested?.Invoke());
         CreateMenuButton("Рекорды", ShowScores);
         CreateMenuButton("Настройки", () => SettingsRequested?.Invoke());
         CreateMenuButton("Выход", () => GetTree().Quit());

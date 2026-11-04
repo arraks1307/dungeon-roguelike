@@ -345,7 +345,9 @@ public partial class NetSession : Node
     {
         if (!IsHost || kind < 0 || kind >= (int)HeroActionKind.Leave)
             return; // Leave клиент прислать не может — только хост, когда игрок отключился
-        var action = new HeroAction((HeroActionKind)kind, new Vector2I(Math.Clamp(dx, -1, 1), Math.Clamp(dy, -1, 1)), index, extra);
+        bool anyCell = kind == (int)HeroActionKind.Wanderer; // у странника в Direction лежит клетка, а не шаг
+        var direction = anyCell ? new Vector2I(dx, dy) : new Vector2I(Math.Clamp(dx, -1, 1), Math.Clamp(dy, -1, 1));
+        var action = new HeroAction((HeroActionKind)kind, direction, index, extra);
         ActionReceived?.Invoke(Multiplayer.GetRemoteSenderId(), action);
     }
 
