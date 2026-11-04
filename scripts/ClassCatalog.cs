@@ -22,7 +22,7 @@ public enum SkillId
     FrostNova,
 }
 
-/// <summary>Активная способность: срабатывает по клавише F или G и потом перезаряжается Cooldown ходов.</summary>
+/// <summary>Активная способность: срабатывает по клавише F или G и потом перезаряжается за Cooldown атак героя.</summary>
 public record SkillDef(SkillId Id, string Name, string Description, int Cooldown);
 
 /// <summary>Класс героя: стартовые характеристики, снаряжение и две способности.</summary>
@@ -42,8 +42,8 @@ public static class ClassCatalog
         new[] { ItemCatalog.Dagger, ItemCatalog.LeatherArmor, ItemCatalog.HealthPotion },
         new[]
         {
-            new SkillDef(SkillId.Whirlwind, "Вихрь", "удар по всем врагам вокруг", 5),
-            new SkillDef(SkillId.SecondWind, "Второе дыхание", "восстанавливает 40% здоровья", 15),
+            new SkillDef(SkillId.Whirlwind, "Вихрь", "удар по всем врагам вокруг", 3),
+            new SkillDef(SkillId.SecondWind, "Второе дыхание", "восстанавливает 40% здоровья", 5),
         });
 
     public static readonly ClassDef Ranger = new(
@@ -53,8 +53,8 @@ public static class ClassCatalog
         new[] { ItemCatalog.Dagger, ItemCatalog.SightAmulet, ItemCatalog.HealthPotion },
         new[]
         {
-            new SkillDef(SkillId.AimedShot, "Меткий выстрел", "стрела в ближайшего врага (атака +5)", 2),
-            new SkillDef(SkillId.ArrowRain, "Град стрел", "стрелы во всех видимых врагов", 7),
+            new SkillDef(SkillId.AimedShot, "Меткий выстрел", "стрела в ближайшего врага (атака +3)", 0),
+            new SkillDef(SkillId.ArrowRain, "Град стрел", "стрелы во всех видимых врагов", 3),
         });
 
     public static readonly ClassDef Mage = new(
@@ -64,8 +64,8 @@ public static class ClassCatalog
         new[] { ItemCatalog.Dagger, ItemCatalog.HealthPotion, ItemCatalog.HealthPotion, ItemCatalog.MapScroll },
         new[]
         {
-            new SkillDef(SkillId.Fireball, "Огненный шар", "взрыв по цели и соседям (6 + 2×уровень)", 3),
-            new SkillDef(SkillId.FrostNova, "Ледяная нова", "урон и заморозка всех в радиусе 2", 9),
+            new SkillDef(SkillId.Fireball, "Огненный шар", "взрыв по цели и соседям (6 + 2×уровень)", 2),
+            new SkillDef(SkillId.FrostNova, "Ледяная нова", "урон и заморозка всех в радиусе 2", 4),
         });
 
     public static readonly ClassDef[] All = { Warrior, Ranger, Mage };
@@ -83,7 +83,15 @@ public static class ClassCatalog
         new("Зоркость", "+2 к радиусу обзора", new Stats(Vision: 2)),
         new("Шипастая кожа", "+2 урона шипами атакующим", new Stats(Thorns: 2)),
         new("Огненная кровь", "+2 урона огнём при каждом ударе", new Stats(FireDamage: 2)),
-        new("Сосредоточенность", "перезарядка способностей на 1 ход короче", default, CooldownReduction: 1),
+        new("Сосредоточенность", "способностям нужно на 1 атаку меньше", default, CooldownReduction: 1),
+    };
+
+    /// <summary>«1 атаку», «3 атаки», «5 атак» — русское окончание зависит от числа.</summary>
+    public static string Attacks(int count) => count switch
+    {
+        1 => "1 атаку",
+        >= 2 and <= 4 => $"{count} атаки",
+        _ => $"{count} атак",
     };
 
     public static Perk FindPerk(string name) => Array.Find(Perks, perk => perk.Name == name);

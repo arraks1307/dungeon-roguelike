@@ -26,7 +26,7 @@ public partial class GameManager
         if (cooldown > 0)
         {
             if (IsLocalHero(hero))
-                _hud.AddMessage($"«{skill.Name}» будет готов через {cooldown} ход(а).");
+                _hud.AddMessage($"«{skill.Name}» зарядится через {ClassCatalog.Attacks(cooldown)}.");
             return false;
         }
 
@@ -44,6 +44,8 @@ public partial class GameManager
             return false;
 
         hero.StartCooldown(index);
+        if (skill.Id != SkillId.SecondWind)
+            hero.ChargeSkills(except: index); // боевая способность — тоже атака: заряжает вторую
         _tutorialSkillUsed = true;
         if (hero.IsInvisible && skill.Id != SkillId.SecondWind)
         {
@@ -93,7 +95,7 @@ public partial class GameManager
         Effects.Projectile(this, hero.GridPos, target.GridPos, hero.Class.Color);
         _sound.Play(Sound.Shoot);
         bool crit = _rng.Next(100) < hero.Bonuses.Crit;
-        int damage = RollDamage(hero, target) + 5;
+        int damage = RollDamage(hero, target) + 3;
         if (crit)
             damage *= 2;
         _hud.AddMessage($"Меткий выстрел{(crit ? " — в яблочко!" : "")}: {target.DisplayName} получает {damage}.");

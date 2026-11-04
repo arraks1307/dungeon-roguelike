@@ -452,6 +452,8 @@ public partial class GameManager
                     Add(item.Count);
                     Add((int)item.Rarity);
                 }
+                Add(hero.SkillCooldowns[0]);
+                Add(hero.SkillCooldowns[1]);
                 Add(hero.HasActed ? 1 : 0);
                 Add(hero.PendingLevelUps);
             }

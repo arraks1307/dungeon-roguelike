@@ -958,6 +958,7 @@ public partial class GameManager : Node3D, IGameWorld
         }
 
         hero.PlayAttack(enemy.GridPos);
+        hero.ChargeSkills();
         var bonuses = hero.Bonuses;
         int damage = RollDamage(hero, enemy) + bonuses.FireDamage;
         bool crit = _rng.Next(100) < bonuses.Crit;

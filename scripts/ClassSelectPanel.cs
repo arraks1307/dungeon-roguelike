@@ -132,7 +132,7 @@ public partial class ClassSelectPanel : CanvasLayer
     {
         var start = string.Join(", ", playerClass.StartingItems.Select(item => item.Name).Distinct());
         var skills = string.Join("\n", playerClass.Skills.Select((skill, i) =>
-            $"{(i == 0 ? "F" : "G")} — {skill.Name}: {skill.Description} (перезарядка {skill.Cooldown})"));
+            $"{(i == 0 ? "F" : "G")} — {skill.Name}: {skill.Description} ({(skill.Cooldown == 0 ? "без зарядки" : $"заряжается за {ClassCatalog.Attacks(skill.Cooldown)}")})"));
 
         var card = new Button
         {

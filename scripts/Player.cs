@@ -328,8 +328,21 @@ public partial class Player : Actor
 
     public int CooldownReduction => _perks.Sum(perk => perk.CooldownReduction);
 
+    /// <summary>
+    /// Герой атаковал: способности заряжаются на одну атаку. except — способность, которой он
+    /// только что ударил: сама себя она не заряжает.
+    /// </summary>
+    public void ChargeSkills(int except = -1)
+    {
+        for (int i = 0; i < SkillCooldowns.Length; i++)
+            if (i != except && SkillCooldowns[i] > 0)
+                SkillCooldowns[i]--;
+    }
+
     public void StartCooldown(int skillIndex) =>
-        SkillCooldowns[skillIndex] = Math.Max(1, Class.Skills[skillIndex].Cooldown - CooldownReduction);
+        SkillCooldowns[skillIndex] = Class.Skills[skillIndex].Cooldown == 0
+            ? 0 // способность без зарядки (меткий выстрел)
+            : Math.Max(1, Class.Skills[skillIndex].Cooldown - CooldownReduction);
 
     public void Heal(int amount) => Hp = Mathf.Min(Hp + amount, MaxHp);
 
@@ -359,15 +372,12 @@ public partial class Player : Actor
     }
 
     /// <summary>
-    /// Вызывается в конце каждого хода: отсчитывает эффекты зелий, перезарядку и регенерацию.
+    /// Вызывается в конце каждого хода: отсчитывает эффекты зелий и регенерацию.
     /// Возвращает, сколько здоровья восстановилось и какие эффекты закончились.
     /// </summary>
     public (int Healed, bool StrengthEnded, bool InvisibilityEnded) TickEffects()
     {
         _turnCounter++;
-        for (int i = 0; i < SkillCooldowns.Length; i++)
-            if (SkillCooldowns[i] > 0)
-                SkillCooldowns[i]--;
 
         int healed = 0;
         if (Bonuses.Regen > 0 && IsHurt && _turnCounter % RegenInterval == 0)

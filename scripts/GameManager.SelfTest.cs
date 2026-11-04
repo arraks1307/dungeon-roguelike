@@ -309,6 +309,9 @@ public partial class GameManager
             case "pause":
                 Pause();
                 break;
+            case "charge":
+                RunChargeTest();
+                break;
             case "services":
                 RunServicesTest();
                 break;
@@ -418,7 +421,7 @@ public partial class GameManager
             return;
         }
 
-        if (_tutorialStep == TutorialStep.Fight && _tutorialTestShots++ == 10)
+        if (_tutorialStep == TutorialStep.Fight && _tutorialTestShots++ == 10 && DisplayServer.GetName() != "headless")
             GetViewport().GetTexture().GetImage().SavePng(_screenshotPath);
         if (_frame > 3000)
         {
@@ -466,6 +469,38 @@ public partial class GameManager
             .OrderBy(direction => distances[hero.GridPos + direction])
             .FirstOrDefault();
         PerformHeroAction(hero, HeroAction.Move(step));
+    }
+
+    /// <summary>Правило зарядки: ходы не заряжают, удар и вторая боевая способность — заряжают.</summary>
+    private void RunChargeTest()
+    {
+        var hero = _localHero;
+        foreach (var enemy in _enemies.ToList())
+        {
+            _enemies.Remove(enemy);
+            enemy.QueueFree();
+        }
+        var cell = DungeonMap.Directions.Select(d => hero.GridPos + d).First(c => _map.Get(c) == Tile.Floor && _map.CanMove(hero.GridPos, c));
+        var target = SpawnEnemy(Enemy.Types.First(type => type.Name == "Мимик"), cell);
+        target.Alerted = true;
+        string Cooldowns() => $"F={hero.SkillCooldowns[0]} G={hero.SkillCooldowns[1]}";
+        bool Act(string name, HeroAction action)
+        {
+            bool spent = PerformHeroAction(hero, action);
+            GD.Print($"Зарядка: {name}: потрачен ход {spent}, {Cooldowns()}");
+            return spent;
+        }
+
+        GD.Print($"Зарядка: {hero.Class.Name}, старт {Cooldowns()}, значения F={hero.Class.Skills[0].Cooldown} G={hero.Class.Skills[1].Cooldown}");
+        Act("F", HeroAction.Skill(0));
+        Act("F ещё раз (не заряжена)", HeroAction.Skill(0));
+        hero.TakeDamage(5);
+        Act("G", HeroAction.Skill(1));
+        for (int i = 0; i < 3; i++)
+            Act("ожидание", HeroAction.Wait);
+        if (!target.IsDead)
+            Act("удар", HeroAction.Move(target.GridPos - hero.GridPos));
+        GetTree().Quit();
     }
 
     /// <summary>Услуги торговца теми же путями, что и кнопки окна, затем сохранение и загрузка.</summary>
