@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Threading.Tasks;
 using Godot;
 
 namespace Roguelike;
@@ -50,6 +51,8 @@ public partial class SoundManager : Node
     private const int PoolSize = 16;      // сколько звуков может звучать одновременно
     private const float PeakLevel = 0.9f; // до какого уровня нормализуем каждый звук
     private const string WorldBus = "World";
+    public const string MusicBus = "Music";
+    private const float MusicVolumeDb = -11f;  // музыка — фон: тише звуков, ползунок лишь уменьшает её от этого уровня
     private const float AmbienceSeconds = 12f;
     private const float AmbienceVolumeDb = -24f;
 
@@ -98,15 +101,53 @@ public partial class SoundManager : Node
         AddItems();
         AddMagic();
         AddWorld();
-
-        // Без звуковой карты (проверки без окна) фон синтезировать незачем
-        if (DisplayServer.GetName() != "headless")
-            StartAmbience();
     }
+
+    /// <summary>Фон: гул подземелья сразу, музыка — когда досчитается в отдельном потоке.</summary>
+    public void StartBackground()
+    {
+        StartAmbience();
+        Task.Run(() =>
+        {
+            var data = ToBytes(MusicSynth.Render());
+            Callable.From(() => StartMusic(data)).CallDeferred(); // узлы трогаем только из главного потока
+        });
+    }
+
+    private void StartMusic(byte[] data)
+    {
+        var player = new AudioStreamPlayer { Stream = ToMusicStream(data), Bus = MusicBus, VolumeDb = -40f };
+        AddChild(player);
+        player.Play();
+        GD.Print($"Музыка: запущена, {data.Length / 1024 / 1024} МБ");
+        // Музыка плавно проявляется, а не включается щелчком
+        CreateTween().TweenProperty(player, "volume_db", MusicVolumeDb, 4f).SetTrans(Tween.TransitionType.Sine).SetEase(Tween.EaseType.Out);
+    }
+
+    private static AudioStreamWav ToMusicStream(byte[] data) => new()
+    {
+        Format = AudioStreamWav.FormatEnum.Format16Bits,
+        MixRate = MusicSynth.MixRate,
+        Stereo = true,
+        Data = data,
+        LoopMode = AudioStreamWav.LoopModeEnum.Forward,
+        LoopBegin = 0,
+        LoopEnd = data.Length / 4, // в кадрах: два канала по два байта
+    };
 
     /// <summary>Реверберация — отражения от стен. Отдельная шина, чтобы интерфейс звучал сухо.</summary>
     private static void CreateWorldBus()
     {
+        if (AudioServer.GetBusIndex(MusicBus) < 0)
+        {
+            // У музыки своя шина: её громкость настраивается отдельно от звуков
+            AudioServer.AddBus();
+            int music = AudioServer.BusCount - 1;
+            AudioServer.SetBusName(music, MusicBus);
+            AudioServer.SetBusSend(music, "Master");
+            AudioServer.AddBusEffect(music, new AudioEffectReverb { RoomSize = 0.8f, Damping = 0.6f, Wet = 0.3f, Dry = 1f, Spread = 0.9f });
+            Settings.ApplyMusicVolume();
+        }
         if (AudioServer.GetBusIndex(WorldBus) >= 0)
             return;
         AudioServer.AddBus();
@@ -361,22 +402,24 @@ public partial class SoundManager : Node
     }
 
     /// <summary>Переводим числа в байты 16-битного звука (little-endian: младший байт первым).</summary>
-    private static AudioStreamWav ToStream(float[] samples)
+    private static AudioStreamWav ToStream(float[] samples) => new()
+    {
+        Format = AudioStreamWav.FormatEnum.Format16Bits,
+        MixRate = MixRate,
+        Stereo = false,
+        Data = ToBytes(samples),
+    };
+
+    private static byte[] ToBytes(float[] samples)
     {
         var data = new byte[samples.Length * 2];
         for (int i = 0; i < samples.Length; i++)
         {
-            short sample = (short)(Mathf.Clamp(samples[i], -1f, 1f) * short.MaxValue);
+            short sample = (short)(Math.Clamp(samples[i], -1f, 1f) * short.MaxValue);
             data[i * 2] = (byte)(sample & 0xFF);
             data[i * 2 + 1] = (byte)((sample >> 8) & 0xFF);
         }
-        return new AudioStreamWav
-        {
-            Format = AudioStreamWav.FormatEnum.Format16Bits,
-            MixRate = MixRate,
-            Stereo = false,
-            Data = data,
-        };
+        return data;
     }
 
     /// <summary>
@@ -451,6 +494,10 @@ public partial class SoundManager : Node
     {
         foreach (var (sound, def) in _sounds)
             def.Variants[0].SaveToWav($"{folder}/{sound}.wav");
+        var music = MusicSynth.Render();
+        foreach (var line in MusicSynth.Report(music))
+            GD.Print(line);
+        ToMusicStream(ToBytes(music)).SaveToWav($"{folder}/Music.wav");
     }
 
     // ---------- Кирпичики для звуков ----------

@@ -221,6 +221,8 @@ public partial class GameManager : Node3D, IGameWorld
         AddChild(_shopPanel);
         _shopPanel.BuyRequested += OnShopBuy;
         _shopPanel.SellRequested += OnShopSell;
+        _shopPanel.ServiceRequested += OnShopService;
+        _shopPanel.Services = BuildServices;
 
         _levelUpPanel = new LevelUpPanel();
         AddChild(_levelUpPanel);
@@ -251,6 +253,8 @@ public partial class GameManager : Node3D, IGameWorld
         SetupCoop();
         SetupTutorial();
         ShowMainMenu();
+        if (!IsTestRun && DisplayServer.GetName() != "headless")
+            _sound.StartBackground();
         if (RunSoundTools())
             return;
         if (_netTestRole != null)

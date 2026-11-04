@@ -20,6 +20,7 @@ public enum GraphicsQuality
 public class GameSettings
 {
     public int Volume { get; set; } = 80;
+    public int Music { get; set; } = 60;
     public bool Fullscreen { get; set; }
     public GraphicsQuality Graphics { get; set; } = GraphicsQuality.High;
     public AnimationSpeed Animation { get; set; } = AnimationSpeed.Normal;
@@ -73,12 +74,23 @@ public static class Settings
         file?.StoreString(JsonSerializer.Serialize(Current));
     }
 
+    /// <summary>Громкость музыки. Её шину создаёт SoundManager, поэтому при первом запуске её может ещё не быть.</summary>
+    public static void ApplyMusicVolume()
+    {
+        int bus = AudioServer.GetBusIndex(SoundManager.MusicBus);
+        if (bus < 0)
+            return;
+        AudioServer.SetBusMute(bus, Current.Music == 0);
+        AudioServer.SetBusVolumeDb(bus, Mathf.LinearToDb(Current.Music / 100f));
+    }
+
     /// <summary>Применяет настройки к движку: громкость главной шины звука и режим окна.</summary>
     public static void Apply()
     {
         // Громкость в Godot задаётся в децибелах, а нам удобнее проценты — переводим
         AudioServer.SetBusMute(0, Current.Volume == 0);
         AudioServer.SetBusVolumeDb(0, Mathf.LinearToDb(Current.Volume / 100f));
+        ApplyMusicVolume();
 
         var mode = Current.Fullscreen ? DisplayServer.WindowMode.Fullscreen : DisplayServer.WindowMode.Windowed;
         if (DisplayServer.WindowGetMode() != mode)

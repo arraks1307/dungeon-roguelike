@@ -63,6 +63,7 @@ public class ItemSave
     public Rarity Rarity;
     public string[] Affixes = Array.Empty<string>();
     public int Count = 1;
+    public int Upgrade; // в старых сохранениях поля нет — будет 0
 
     public static ItemSave From(Item item) => new()
     {
@@ -70,6 +71,7 @@ public class ItemSave
         Rarity = item.Rarity,
         Affixes = item.Affixes.Select(affix => affix.Name).ToArray(),
         Count = item.Count,
+        Upgrade = item.Upgrade,
     };
 
     /// <summary>Восстановить предмет по названиям. null — если такого шаблона больше нет в игре.</summary>
@@ -82,7 +84,7 @@ public class ItemSave
             .Select(name => ItemCatalog.Affixes.FirstOrDefault(affix => affix.Name == name))
             .Where(affix => affix != null)
             .ToArray();
-        return new Item(template, Rarity, affixes) { Count = Count };
+        return new Item(template, Rarity, affixes) { Count = Count, Upgrade = Upgrade };
     }
 }
 

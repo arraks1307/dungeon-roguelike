@@ -251,6 +251,15 @@ public partial class GameManager
             case HeroActionKind.Perk:
                 ChoosePerk(hero, action.Index);
                 return false;
+            case HeroActionKind.Upgrade:
+                UpgradeItem(hero, (EquipSlot)action.Index);
+                return false;
+            case HeroActionKind.Treat:
+                HealAtMerchant(hero);
+                return false;
+            case HeroActionKind.Mystery:
+                OpenMysteryBox(hero);
+                return false;
             case HeroActionKind.Leave:
                 RemoveHero(hero);
                 return false;

@@ -440,6 +440,9 @@ public partial class Player : Actor
         Teleport(new Vector2I(save.X, save.Y));
     }
 
+    /// <summary>Вещь на герое изменилась (заточка) — пересчитать характеристики.</summary>
+    public void RefreshStats() => RecalculateStats();
+
     private void RecalculateStats()
     {
         var total = new Stats();

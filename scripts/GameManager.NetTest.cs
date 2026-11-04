@@ -124,7 +124,14 @@ public partial class GameManager
     {
         double roll = _botRng.NextDouble();
         int bag = hero.Inventory.Items.Count;
-        if (_merchant != null && roll < 0.15 && bag > 0)
+        var gear = hero.Inventory.Equipped.FirstOrDefault();
+        if (_merchant != null && roll < 0.05 && gear != null)
+            SubmitLocalAction(HeroAction.Upgrade((int)gear.Slot));
+        else if (_merchant != null && roll < 0.08 && hero.IsHurt)
+            SubmitLocalAction(HeroAction.Treat);
+        else if (_merchant != null && roll < 0.1)
+            SubmitLocalAction(HeroAction.Mystery);
+        else if (_merchant != null && roll < 0.15 && bag > 0)
             SubmitLocalAction(HeroAction.Sell(0));
         else if (_merchant != null && roll < 0.3 && _merchant.Stock.Count > 0)
             SubmitLocalAction(HeroAction.Buy(_botRng.Next(_merchant.Stock.Count), _merchant.Stock.Count));

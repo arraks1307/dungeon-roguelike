@@ -115,6 +115,9 @@ public class Item
     public IReadOnlyList<Affix> Affixes { get; }
     public int Count { get; set; } = 1;
 
+    /// <summary>Уровень заточки у торговца: ко всем бонусам вещи прибавляется UpgradeStats.</summary>
+    public int Upgrade { get; set; }
+
     public Item(ItemTemplate template, Rarity rarity = Rarity.Common, IReadOnlyList<Affix> affixes = null)
     {
         Template = template;
@@ -128,9 +131,10 @@ public class Item
     public bool IsStackable => !IsEquipment;
     public Color Color => Template.Color;
 
-    public string Name => Affixes.Count == 0
+    public string Name => (Affixes.Count == 0
         ? Template.Name
-        : $"{Template.Name} {string.Join(" и ", Affixes.Select(affix => affix.Name))}";
+        : $"{Template.Name} {string.Join(" и ", Affixes.Select(affix => affix.Name))}")
+        + (Upgrade > 0 ? $" +{Upgrade}" : "");
 
     public string DisplayName => Count > 1 ? $"{Name} ×{Count}" : Name;
 
@@ -159,9 +163,22 @@ public class Item
                 total += affix.Stats;
             if (Rarity == Rarity.Epic)
                 total += Slot == EquipSlot.Weapon ? new Stats(Attack: 1) : new Stats(Defense: 1);
-            return total;
+            return total + UpgradeStats(Slot, Upgrade);
         }
     }
+
+    /// <summary>
+    /// Прибавка от заточки. Защита растёт вдвое медленнее атаки: каждая её единица снимает
+    /// единицу с каждого удара врага, и без этого броня делала бы героя неуязвимым.
+    /// </summary>
+    public static Stats UpgradeStats(EquipSlot slot, int level) => slot switch
+    {
+        EquipSlot.Weapon => new Stats(Attack: level),
+        EquipSlot.Armor or EquipSlot.Helmet => new Stats(Defense: (level + 1) / 2, MaxHp: 3 * level),
+        EquipSlot.Ring => new Stats(Crit: 5 * level),
+        EquipSlot.Amulet => new Stats(MaxHp: 6 * level),
+        _ => default,
+    };
 
     /// <summary>Цена одной штуки у торговца.</summary>
     public int Price => Template.Price * Rarity switch { Rarity.Rare => 2, Rarity.Epic => 4, _ => 1 };

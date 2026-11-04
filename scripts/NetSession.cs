@@ -305,7 +305,7 @@ public partial class NetSession : Node
     [Rpc(MultiplayerApi.RpcMode.AnyPeer)]
     private void RequestAction(int kind, int dx, int dy, int index, int extra)
     {
-        if (!IsHost || kind < 0 || kind > (int)HeroActionKind.Perk)
+        if (!IsHost || kind < 0 || kind >= (int)HeroActionKind.Leave)
             return; // Leave клиент прислать не может — только хост, когда игрок отключился
         var action = new HeroAction((HeroActionKind)kind, new Vector2I(Math.Clamp(dx, -1, 1), Math.Clamp(dy, -1, 1)), index, extra);
         ActionReceived?.Invoke(Multiplayer.GetRemoteSenderId(), action);

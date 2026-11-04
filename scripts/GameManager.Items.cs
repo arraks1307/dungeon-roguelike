@@ -75,7 +75,7 @@ public partial class GameManager
 
         if (pickup.Item == null)
         {
-            hero.Gold += pickup.Gold;
+            hero.Gold += pickup.Gold * _simGoldScale;
             Tell(hero, $"Ты подбираешь {pickup.Gold} золота.", $"{hero.DisplayName} подбирает {pickup.Gold} золота.", InfoColor);
             Effects.FloatingText(this, cell, $"+{pickup.Gold} зол.", InfoColor);
         }

@@ -34,6 +34,8 @@ public partial class GameManager
     private record SimResult(string Class, string Difficulty, int Floor, int Level, bool Victory, bool Timeout, int Turns);
 
     private int _tutorialTestShots;
+    private bool _simShop;             // в симуляции боты тратят золото на услуги торговца
+    private int _simGoldScale = 1;     // боты подбирают мало золота: множитель, чтобы приблизиться к живому игроку
     private string _soundReportFolder; // куда записать WAV и напечатать числа о звуках
     private bool _soundDemo;           // проиграть все звуки подряд, чтобы послушать
     private Vector3 _lastWalkPosition;
@@ -65,6 +67,8 @@ public partial class GameManager
     {
         AudioServer.SetBusMute(0, false);
         AudioServer.SetBusVolumeDb(0, Mathf.LinearToDb(0.8f));
+        int music = AudioServer.GetBusIndex(SoundManager.MusicBus);
+        AudioServer.SetBusMute(music, true); // сначала звуки по отдельности, музыка — в конце
         _mainMenu.Visible = false;
         var title = Ui.CreateLabel(44);
         title.SetAnchorsPreset(Control.LayoutPreset.Center);
@@ -81,6 +85,10 @@ public partial class GameManager
                 await ToSignal(GetTree().CreateTimer(1.3), SceneTreeTimer.SignalName.Timeout);
             }
         }
+        title.Text = "Музыка";
+        AudioServer.SetBusMute(music, false);
+        AudioServer.SetBusVolumeDb(music, Mathf.LinearToDb(0.6f));
+        await ToSignal(GetTree().CreateTimer(MusicSynth.LoopSeconds + 5f), SceneTreeTimer.SignalName.Timeout);
         GetTree().Quit();
     }
 
@@ -124,6 +132,10 @@ public partial class GameManager
                 _soundReportFolder = arg["--sound-report=".Length..];
             else if (arg == "--sound-demo")
                 _soundDemo = true;
+            else if (arg.StartsWith("--sim-gold="))
+                _simGoldScale = int.Parse(arg["--sim-gold=".Length..]);
+            else if (arg == "--sim-shop")
+                _simShop = true;
             else if (arg == "--net-tutorial")
                 _netTestTutorial = true;
             else if (arg == "--net-trade")
@@ -297,6 +309,9 @@ public partial class GameManager
             case "pause":
                 Pause();
                 break;
+            case "services":
+                RunServicesTest();
+                break;
             case "fade":
                 _hud.FadeFromBlack(); // снимок через 40 кадров покажет середину затемнения
                 break;
@@ -311,7 +326,9 @@ public partial class GameManager
                 OpenInventory();
                 break;
             case "shop":
-                _localHero.Gold = 150;
+                _localHero.Gold = 2000;
+                while (_localHero.Inventory.Items.Count < 3)
+                    _localHero.Inventory.TryAdd(ItemCatalog.Roll(_rng, _floor + 4));
                 if (_merchant == null)
                     SpawnMerchant();
                 OpenShop();
@@ -451,6 +468,63 @@ public partial class GameManager
         PerformHeroAction(hero, HeroAction.Move(step));
     }
 
+    /// <summary>Услуги торговца теми же путями, что и кнопки окна, затем сохранение и загрузка.</summary>
+    private void RunServicesTest()
+    {
+        var hero = _localHero;
+        hero.Gold = 3000;
+        if (hero.Inventory.Equipped.FirstOrDefault() == null)
+        {
+            hero.Inventory.TryAdd(new Item(ItemCatalog.Sword));
+            hero.Equip(hero.Inventory.Items.Count - 1);
+        }
+        if (_merchant == null)
+            SpawnMerchant();
+        OpenShop();
+
+        var gear = hero.Inventory.Equipped.First();
+        int attack = hero.Attack, maxHp = hero.MaxHp, defense = hero.Defense;
+        for (int i = 0; i < 4; i++)
+        {
+            int price = UpgradePrice(gear), gold = hero.Gold;
+            OnShopService(HeroAction.Upgrade((int)gear.Slot));
+            GD.Print($"Услуги: заточка за {price}: {gear.Name}, списано {gold - hero.Gold}");
+        }
+        GD.Print($"Услуги: атака {attack} → {hero.Attack}, защита {defense} → {hero.Defense}, здоровье {maxHp} → {hero.MaxHp}");
+
+        hero.TakeDamage(hero.MaxHp / 2);
+        int hp = hero.Hp, before = hero.Gold;
+        OnShopService(HeroAction.Treat);
+        GD.Print($"Услуги: лечение {hp} → {hero.Hp}/{hero.MaxHp}, списано {before - hero.Gold}");
+
+        before = hero.Gold;
+        int bag = hero.Inventory.Items.Count;
+        OnShopService(HeroAction.Mystery);
+        GD.Print($"Услуги: ларец: сумка {bag} → {hero.Inventory.Items.Count}, списано {before - hero.Gold}, вещь: {hero.Inventory.Items[^1].Name}");
+
+        int stock = _merchant.Stock.Count;
+        before = hero.Gold;
+        OnShopBuy(0);
+        GD.Print($"Услуги: покупка: товаров {stock} → {_merchant.Stock.Count}, списано {before - hero.Gold}");
+        stock = _merchant.Stock.Count;
+        before = hero.Gold;
+        OnShopSell(0);
+        GD.Print($"Услуги: продажа: товаров {stock} → {_merchant.Stock.Count}, получено {hero.Gold - before}");
+
+        hero.Gold = 0;
+        before = gear.Upgrade;
+        OnShopService(HeroAction.Upgrade((int)gear.Slot));
+        GD.Print($"Услуги: без денег заточка {before} → {gear.Upgrade} (должна остаться прежней)");
+
+        CloseShop();
+        string saved = WorldSummary();
+        SaveRun();
+        ShowMainMenu();
+        ContinueGame();
+        GD.Print($"Услуги: после загрузки {(saved == WorldSummary() ? "СОВПАДАЕТ" : "РАЗЛИЧАЕТСЯ")}, надето: {string.Join(", ", _localHero.Inventory.Equipped.Select(item => item.Name))}");
+        GetTree().Quit();
+    }
+
     /// <summary>Каждый герой, который ещё не сходил в этом раунде, делает ход автопилотом.</summary>
     private void AutoPilotRound()
     {
@@ -565,6 +639,8 @@ public partial class GameManager
                 StartSimulatedGame();
             }
             _simActions++;
+            if (_simShop)
+                BotUseServices();
             AutoPilotRound();
         }
     }
@@ -572,6 +648,8 @@ public partial class GameManager
     private void PrintSimulationSummary()
     {
         GD.Print("СИМУЛЯЦИЯ: класс | сложность | забегов | средний этаж | медиана | дошли до 5 | до 10 | победы | ср. уровень | зависли");
+        if (_simShop)
+            GD.Print($"СИМУЛЯЦИЯ: на услуги потрачено в среднем {_goldSpentOnServices / _simResults.Count} золота за забег");
         foreach (var group in _simResults.GroupBy(r => (r.Class, r.Difficulty)))
         {
             var floors = group.Select(r => r.Floor).OrderBy(f => f).ToList();

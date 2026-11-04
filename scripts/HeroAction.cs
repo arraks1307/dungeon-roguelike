@@ -14,6 +14,9 @@ public enum HeroActionKind
     Buy,     // купить товар Index; Extra — сколько товаров видел покупатель (защита от «купил не то»)
     Sell,    // продать предмет из ячейки Index
     Perk,    // выбрать улучшение номер Index из ClassCatalog.Perks
+    Upgrade, // услуга: заточить надетую вещь из слота Index (EquipSlot)
+    Treat,   // услуга: вылечиться у торговца
+    Mystery, // услуга: купить таинственный ларец
     Leave,   // игрок отключился — герой покидает отряд (присылает только хост)
 }
 
@@ -32,6 +35,9 @@ public readonly record struct HeroAction(HeroActionKind Kind, Vector2I Direction
     public static HeroAction Buy(int index, int stockCount) => new(HeroActionKind.Buy, Index: index, Extra: stockCount);
     public static HeroAction Sell(int index) => new(HeroActionKind.Sell, Index: index);
     public static HeroAction Perk(int index) => new(HeroActionKind.Perk, Index: index);
+    public static HeroAction Upgrade(int slot) => new(HeroActionKind.Upgrade, Index: slot);
+    public static HeroAction Treat => new(HeroActionKind.Treat);
+    public static HeroAction Mystery => new(HeroActionKind.Mystery);
     public static HeroAction Leave => new(HeroActionKind.Leave);
 
     /// <summary>Тратит ли действие ход (иначе выполняется сразу и раунд не двигает).</summary>

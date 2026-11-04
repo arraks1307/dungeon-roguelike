@@ -13,6 +13,8 @@ public partial class SettingsMenu : CanvasLayer
 
     private HSlider _volume;
     private Label _volumeValue;
+    private HSlider _music;
+    private Label _musicValue;
     private CheckButton _fullscreen;
     private OptionButton _animation;
     private OptionButton _graphics;
@@ -30,18 +32,8 @@ public partial class SettingsMenu : CanvasLayer
         title.AddThemeColorOverride("font_color", Ui.TitleColor);
         column.AddChild(title);
 
-        var volumeRow = CreateRow(column, "Громкость");
-        _volume = new HSlider { MinValue = 0, MaxValue = 100, Step = 5, CustomMinimumSize = new Vector2(220f, 24f) };
-        _volume.ValueChanged += value =>
-        {
-            Settings.Current.Volume = (int)value;
-            _volumeValue.Text = $"{(int)value}%";
-            Changed();
-        };
-        volumeRow.AddChild(_volume);
-        _volumeValue = Ui.CreateLabel(20);
-        _volumeValue.CustomMinimumSize = new Vector2(60f, 0f);
-        volumeRow.AddChild(_volumeValue);
+        (_volume, _volumeValue) = CreateSlider(column, "Громкость", value => Settings.Current.Volume = value);
+        (_music, _musicValue) = CreateSlider(column, "Музыка", value => Settings.Current.Music = value);
 
         var animationRow = CreateRow(column, "Анимации");
         _animation = new OptionButton { CustomMinimumSize = new Vector2(220f, 36f) };
@@ -82,6 +74,8 @@ public partial class SettingsMenu : CanvasLayer
         var current = Settings.Current;
         _volume.SetValueNoSignal(current.Volume);
         _volumeValue.Text = $"{current.Volume}%";
+        _music.SetValueNoSignal(current.Music);
+        _musicValue.Text = $"{current.Music}%";
         _animation.Selected = (int)current.Animation;
         _graphics.Selected = (int)current.Graphics;
         _fullscreen.SetPressedNoSignal(current.Fullscreen);
@@ -102,6 +96,23 @@ public partial class SettingsMenu : CanvasLayer
     {
         Settings.Apply();
         Settings.Save();
+    }
+
+    private static (HSlider Slider, Label Value) CreateSlider(Node parent, string caption, Action<int> apply)
+    {
+        var row = CreateRow(parent, caption);
+        var slider = new HSlider { MinValue = 0, MaxValue = 100, Step = 5, CustomMinimumSize = new Vector2(220f, 24f) };
+        var value = Ui.CreateLabel(20);
+        value.CustomMinimumSize = new Vector2(60f, 0f);
+        slider.ValueChanged += newValue =>
+        {
+            apply((int)newValue);
+            value.Text = $"{(int)newValue}%";
+            Changed();
+        };
+        row.AddChild(slider);
+        row.AddChild(value);
+        return (slider, value);
     }
 
     private static HBoxContainer CreateRow(Node parent, string caption)
