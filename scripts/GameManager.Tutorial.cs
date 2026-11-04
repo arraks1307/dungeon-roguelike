@@ -107,6 +107,8 @@ public partial class GameManager
         ApplyTheme();
         _localHero.Teleport(_map.StartPos);
         _camera.SnapToTarget();
+        if (!IsTestRun)
+            _hud.FadeFromBlack();
 
         PlaceItem(new Item(ItemCatalog.LifeAmulet), TutorialItemCell);
         Effects.Ping(this, TutorialWalkGoal, InfoColor);

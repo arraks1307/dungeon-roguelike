@@ -8,7 +8,14 @@ namespace Roguelike;
 /// </summary>
 public partial class Actor : Node3D
 {
-    private const float MoveDuration = 0.1f;
+    private const float MoveDuration = 0.14f;
+    private const float StepHop = 0.07f;      // на сколько тело приподнимается в середине шага
+
+    /// <summary>
+    /// Длительность шага при удержании клавиши. Чуть больше паузы между шагами (Player.WalkInterval):
+    /// новый шаг начинается раньше, чем кончился старый, поэтому герой не замирает на каждой клетке.
+    /// </summary>
+    private const float ContinuousStepSeconds = 0.16f;
 
     public string DisplayName { get; protected set; } = "";
     public int MaxHp { get; protected set; }
@@ -29,6 +36,8 @@ public partial class Actor : Node3D
     private Tween _attackTween;
     private Node3D _healthBar;
     private MeshInstance3D _healthFill;
+    private Tween _barTween;
+    private float _shownRatio = 1f;
 
     // «Дыхание»: у каждого своя фаза, чтобы все существа не дышали в унисон
     private readonly float _breathPhase = (float)GD.RandRange(0.0, Mathf.Tau);
@@ -115,6 +124,20 @@ public partial class Actor : Node3D
             return;
         float ratio = (float)Hp / MaxHp;
         _healthBar.Visible = Hp > 0 && Hp < MaxHp;
+        _barTween?.Kill();
+        if (Settings.AnimationScale == 0f || !Effects.Enabled)
+        {
+            ShowHealthRatio(ratio);
+            return;
+        }
+        _barTween = CreateTween();
+        _barTween.TweenMethod(Callable.From<float>(ShowHealthRatio), _shownRatio, ratio, 0.2f * Settings.AnimationScale)
+            .SetTrans(Tween.TransitionType.Cubic).SetEase(Tween.EaseType.Out);
+    }
+
+    private void ShowHealthRatio(float ratio)
+    {
+        _shownRatio = ratio;
         // Сжимаем заливку по ширине и сдвигаем влево, чтобы она «убывала» справа
         _healthFill.Scale = new Vector3(Mathf.Max(ratio, 0.001f), 1f, 1f);
         _healthFill.Position = new Vector3(-(1f - ratio) * BarWidth / 2f, 0f, 0f);
@@ -136,18 +159,32 @@ public partial class Actor : Node3D
         Position = GridToWorld(p);
     }
 
-    /// <summary>Логически переходим в клетку сразу, а визуально — плавно за MoveDuration.</summary>
+    /// <summary>Идёт непрерывная ходьба: шаги перетекают друг в друга с постоянной скоростью.</summary>
+    protected virtual bool ContinuousMove => false;
+
+    /// <summary>
+    /// Логически переходим в клетку сразу, а визуально — плавно. Одиночный шаг мягко тормозит,
+    /// непрерывная ходьба идёт ровно. В середине шага тело чуть приподнимается: так видно походку.
+    /// </summary>
     public void MoveTo(Vector2I p)
     {
         GridPos = p;
         _moveTween?.Kill();
-        if (Settings.AnimationScale == 0f)
+        if (Settings.AnimationScale == 0f || !Effects.Enabled)
         {
             Position = GridToWorld(p); // анимации выключены — переходим сразу
             return;
         }
+
+        var from = new Vector3(Position.X, 0f, Position.Z);
+        var to = GridToWorld(p);
+        bool continuous = ContinuousMove;
         _moveTween = CreateTween();
-        _moveTween.TweenProperty(this, "position", GridToWorld(p), MoveDuration * Settings.AnimationScale);
+        _moveTween.TweenMethod(Callable.From<float>(t =>
+                Position = from.Lerp(to, t) + Vector3.Up * Mathf.Sin(t * Mathf.Pi) * StepHop),
+                0f, 1f, continuous ? ContinuousStepSeconds : MoveDuration * Settings.AnimationScale)
+            .SetTrans(continuous ? Tween.TransitionType.Linear : Tween.TransitionType.Sine)
+            .SetEase(Tween.EaseType.Out);
     }
 
     /// <summary>Анимация удара: тело дёргается в сторону цели и возвращается.</summary>
@@ -160,8 +197,11 @@ public partial class Actor : Node3D
         if (scale == 0f)
             return;
         _attackTween = CreateTween();
-        _attackTween.TweenProperty(Body, "position", _bodyRestPosition + offset, 0.05f * scale);
-        _attackTween.TweenProperty(Body, "position", _bodyRestPosition, 0.1f * scale);
+        // Быстрый выпад с разгоном и мягкий возврат
+        _attackTween.TweenProperty(Body, "position", _bodyRestPosition + offset, 0.06f * scale)
+            .SetTrans(Tween.TransitionType.Quad).SetEase(Tween.EaseType.In);
+        _attackTween.TweenProperty(Body, "position", _bodyRestPosition, 0.14f * scale)
+            .SetTrans(Tween.TransitionType.Sine).SetEase(Tween.EaseType.Out);
     }
 
     public void TakeDamage(int amount)
@@ -182,7 +222,8 @@ public partial class Actor : Node3D
             return;
         }
         var tween = CreateTween();
-        tween.TweenProperty(this, "scale", new Vector3(0.01f, 0.01f, 0.01f), 0.2f * Settings.AnimationScale);
+        tween.TweenProperty(this, "scale", new Vector3(0.01f, 0.01f, 0.01f), 0.25f * Settings.AnimationScale)
+            .SetTrans(Tween.TransitionType.Back).SetEase(Tween.EaseType.In);
         tween.TweenCallback(Callable.From(QueueFree));
     }
 }

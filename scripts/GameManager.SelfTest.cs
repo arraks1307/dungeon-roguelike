@@ -34,8 +34,55 @@ public partial class GameManager
     private record SimResult(string Class, string Difficulty, int Floor, int Level, bool Victory, bool Timeout, int Turns);
 
     private int _tutorialTestShots;
+    private string _soundReportFolder; // куда записать WAV и напечатать числа о звуках
+    private bool _soundDemo;           // проиграть все звуки подряд, чтобы послушать
+    private Vector3 _lastWalkPosition;
+    private ulong _lastWalkMoveMs;
+    private ulong _longestWalkGapMs;
+    private int _walkMoves;
 
     private bool IsTestRun => _screenshotPath != null || _simulateGames > 0 || _netTestRole != null;
+
+    /// <summary>Отчёт о звуках или их прослушивание. true — обычная игра не запускается.</summary>
+    private bool RunSoundTools()
+    {
+        if (_soundReportFolder != null)
+        {
+            foreach (var line in _sound.Report())
+                GD.Print(line);
+            _sound.ExportWav(_soundReportFolder);
+            GetTree().Quit();
+            return true;
+        }
+        if (!_soundDemo)
+            return false;
+        PlaySoundDemo();
+        return true;
+    }
+
+    /// <summary>Все звуки по очереди, с названием на экране. Громкость — 80%, настройки не меняются.</summary>
+    private async void PlaySoundDemo()
+    {
+        AudioServer.SetBusMute(0, false);
+        AudioServer.SetBusVolumeDb(0, Mathf.LinearToDb(0.8f));
+        _mainMenu.Visible = false;
+        var title = Ui.CreateLabel(44);
+        title.SetAnchorsPreset(Control.LayoutPreset.Center);
+        var layer = new CanvasLayer();
+        AddChild(layer);
+        layer.AddChild(title);
+        foreach (var sound in SoundManager.All)
+        {
+            for (int repeat = 0; repeat < 2; repeat++)
+            {
+                title.Text = sound.ToString();
+                GD.Print($"ЗВУК: {sound}");
+                _sound.Play(sound);
+                await ToSignal(GetTree().CreateTimer(1.3), SceneTreeTimer.SignalName.Timeout);
+            }
+        }
+        GetTree().Quit();
+    }
 
     private void ParseCommandLine()
     {
@@ -73,6 +120,10 @@ public partial class GameManager
                 _testGraphics = arg["--graphics=".Length..] == "low" ? GraphicsQuality.Low : GraphicsQuality.High;
             else if (arg.StartsWith("--party="))
                 _testParty = System.Math.Clamp(int.Parse(arg["--party=".Length..]), 1, MaxPartySize);
+            else if (arg.StartsWith("--sound-report="))
+                _soundReportFolder = arg["--sound-report=".Length..];
+            else if (arg == "--sound-demo")
+                _soundDemo = true;
             else if (arg == "--net-tutorial")
                 _netTestTutorial = true;
             else if (arg == "--net-trade")
@@ -220,6 +271,7 @@ public partial class GameManager
         // на мониторе 144 Гц кадры идут в 2.4 раза чаще, чем на 60 Гц), потом отпускаем
         if (_screenshotView == "hold")
         {
+            TrackWalkGaps();
             if (_testHeldKey != Key.None && Time.GetTicksMsec() - _holdStartMs >= 1600)
                 ReleaseHeldKey();
             if (_testHeldKey != Key.None || _frame < moveFrames + 2)
@@ -244,6 +296,9 @@ public partial class GameManager
         {
             case "pause":
                 Pause();
+                break;
+            case "fade":
+                _hud.FadeFromBlack(); // снимок через 40 кадров покажет середину затемнения
                 break;
             case "controls":
                 Pause();
@@ -570,10 +625,26 @@ public partial class GameManager
         Input.ParseInputEvent(new InputEventKey { PhysicalKeycode = _testHeldKey, Keycode = _testHeldKey, Pressed = true });
     }
 
+    /// <summary>Замер плавности: самая долгая пауза между движениями героя за время ходьбы.</summary>
+    private void TrackWalkGaps()
+    {
+        if (_testHeldKey == Key.None)
+            return;
+        ulong now = Time.GetTicksMsec();
+        if (_localHero.Position == _lastWalkPosition)
+            return;
+        // Первый шаг и паузу HoldDelay не считаем: герой ещё не идёт непрерывно
+        if (_walkMoves++ > 20)
+            _longestWalkGapMs = System.Math.Max(_longestWalkGapMs, now - _lastWalkMoveMs);
+        _lastWalkPosition = _localHero.Position;
+        _lastWalkMoveMs = now;
+    }
+
     private void ReleaseHeldKey()
     {
         if (_testHeldKey == Key.None)
             return;
+        GD.Print($"Удержание: самая долгая остановка в ходьбе {_longestWalkGapMs} мс, кадров с движением {_walkMoves}");
         // Если окно теряло фокус, Godot сам «отпускает» все клавиши — тогда ходьба прервалась не из-за игры
         GD.Print($"Удержание: клавиша всё ещё зажата: {Input.IsPhysicalKeyPressed(_testHeldKey)}, " +
                  $"кадров за время удержания: {_frame - _holdStartFrame}");

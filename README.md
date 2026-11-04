@@ -114,6 +114,8 @@ godot --path . -- --screenshot=shot.png --moves=200 --class=mage --start-floor=5
 godot --headless --path . -- --simulate=90 --difficulty=normal
 ```
 
+Звуки можно проверить без игры: `--sound-demo` проигрывает все по очереди с названием на экране, а `--sound-report=папка` печатает их уровни и записывает WAV-файлы.
+
 Другие флаги: `--view=menu|scores|pause|controls|inventory|shop|settings|saveload|reveal|classes|classconfirm|hold|connect|lobby|tutorial|tutorialskip|tutorialoffer`, `--difficulty=easy|normal|hard`, `--graphics=high|low`, `--party=N` (отряд из N ботов), `--load-save=файл` (стартовать с файла сохранения, например от старой версии).
 
 Сетевую игру можно проверить на одном компьютере: каждая копия — отдельный процесс, за героев играет автопилот, а в конце каждая копия печатает контрольную сумму мира — у всех она должна совпасть.

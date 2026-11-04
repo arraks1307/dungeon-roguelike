@@ -17,7 +17,9 @@ public partial class Player : Actor
 
     // Умная ходьба: сколько держать клавишу до начала автоходьбы и пауза между её шагами (секунды)
     private const double HoldDelay = 0.3;
-    private const double WalkInterval = 0.14;
+    private const double WalkInterval = 0.15;
+
+    protected override bool ContinuousMove => _heldKey != Key.None && !_walkStopped;
 
     /// <summary>Нажатие клавиши: шаг, атака или (Vector2I.Zero) пропуск хода. Одно нажатие — одно действие.</summary>
     public event Action<Vector2I> ActionRequested;

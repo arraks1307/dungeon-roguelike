@@ -36,6 +36,9 @@ public partial class Hud : CanvasLayer
     private Label _waitingLabel;
     private Label _stairsLabel;
     private LineEdit _chatEdit;
+    private readonly Dictionary<ProgressBar, Tween> _barTweens = new();
+    private ColorRect _fade;
+    private Tween _fadeTween;
     private PanelContainer _tutorialCard;
     private Label _tutorialProgress;
     private Label _tutorialTitle;
@@ -133,6 +136,11 @@ public partial class Hud : CanvasLayer
         CreateBossBar(root);
         CreateTutorialCard(root);
         CreateGameOverScreen(root);
+
+        // Затемнение при смене этажа — последним, поверх всего HUD; клики сквозь него проходят
+        _fade = new ColorRect { Color = Colors.Black, Visible = false, MouseFilter = Control.MouseFilterEnum.Ignore };
+        _fade.SetAnchorsPreset(Control.LayoutPreset.FullRect);
+        root.AddChild(_fade);
     }
 
     /// <summary>Карточка героя: класс и уровень, полоски здоровья и опыта, характеристики, способности.</summary>
@@ -234,10 +242,8 @@ public partial class Hud : CanvasLayer
         _classLabel.AddThemeColorOverride("font_color", player.Class.Color.Lightened(0.35f));
 
         _hpLabel.Text = $"Здоровье  {player.Hp} / {player.MaxHp}";
-        _hpBar.MaxValue = player.MaxHp;
-        _hpBar.Value = player.Hp;
-        _xpBar.MaxValue = player.ExperienceToNextLevel;
-        _xpBar.Value = player.Experience;
+        SetBar(_hpBar, player.Hp, player.MaxHp);
+        SetBar(_xpBar, player.Experience, player.ExperienceToNextLevel);
 
         _infoLabel.Text = $"Этаж {floor}   •   Атака {player.Attack}   •   Защита {player.Defense}   •   Побеждено {kills}";
         _goldLabel.Text = $"Золото {player.Gold}   •   Сумка {player.Inventory.Items.Count}/{Inventory.Capacity}";
@@ -340,8 +346,7 @@ public partial class Hud : CanvasLayer
         if (!_bossBox.Visible)
             return;
         _bossLabel.Text = $"{boss.DisplayName}   {boss.Hp} / {boss.MaxHp}";
-        _bossBar.MaxValue = boss.MaxHp;
-        _bossBar.Value = boss.Hp;
+        SetBar(_bossBar, boss.Hp, boss.MaxHp);
     }
 
     /// <summary>
@@ -381,6 +386,37 @@ public partial class Hud : CanvasLayer
         _waitingLabel.Visible = names is { Count: > 0 };
         if (_waitingLabel.Visible)
             _waitingLabel.Text = $"Ждём: {string.Join(", ", names)}";
+    }
+
+    /// <summary>Полоска плавно доезжает до нового значения, а не прыгает к нему.</summary>
+    private void SetBar(ProgressBar bar, double value, double max)
+    {
+        bar.MaxValue = max;
+        _barTweens.TryGetValue(bar, out var running);
+        running?.Kill();
+        if (Settings.AnimationScale == 0f || !Effects.Enabled)
+        {
+            bar.Value = value;
+            return;
+        }
+        var tween = CreateTween();
+        tween.TweenProperty(bar, "value", value, 0.25f * Settings.AnimationScale)
+            .SetTrans(Tween.TransitionType.Cubic).SetEase(Tween.EaseType.Out);
+        _barTweens[bar] = tween;
+    }
+
+    /// <summary>Переход на новый этаж: экран появляется из темноты.</summary>
+    public void FadeFromBlack()
+    {
+        if (Settings.AnimationScale == 0f || !Effects.Enabled)
+            return;
+        _fadeTween?.Kill();
+        _fade.Modulate = Colors.White;
+        _fade.Visible = true;
+        _fadeTween = CreateTween();
+        _fadeTween.TweenProperty(_fade, "modulate:a", 0f, 0.45f)
+            .SetTrans(Tween.TransitionType.Sine).SetEase(Tween.EaseType.In);
+        _fadeTween.TweenCallback(Callable.From(() => _fade.Visible = false));
     }
 
     /// <summary>Строка «К лестнице: …» — отряд собирается спускаться, а кто-то ещё далеко.</summary>

@@ -132,6 +132,12 @@ public static class Ui
         background.SetAnchorsPreset(Control.LayoutPreset.FullRect);
         parent.AddChild(background);
 
+        // Окно появляется плавно: и когда показывают весь слой, и когда переключают экран внутри него
+        var screen = background;
+        screen.VisibilityChanged += () => FadeIn(screen);
+        if (parent is CanvasLayer layer)
+            layer.VisibilityChanged += () => FadeIn(screen);
+
         var center = new CenterContainer();
         center.SetAnchorsPreset(Control.LayoutPreset.FullRect);
         background.AddChild(center);
@@ -143,6 +149,15 @@ public static class Ui
         column.AddThemeConstantOverride("separation", 14);
         card.AddChild(column);
         return column;
+    }
+
+    private static void FadeIn(Control screen)
+    {
+        if (!screen.IsInsideTree() || !screen.IsVisibleInTree() || Settings.AnimationScale == 0f)
+            return;
+        screen.Modulate = Colors.Transparent;
+        screen.CreateTween().TweenProperty(screen, "modulate", Colors.White, 0.14f * Settings.AnimationScale)
+            .SetTrans(Tween.TransitionType.Sine).SetEase(Tween.EaseType.Out);
     }
 
     /// <summary>

@@ -125,15 +125,16 @@ public partial class GameManager
     /// </summary>
     private void OnHeroReachedStairs(Player hero)
     {
-        _sound.Play(Sound.Stairs);
         if (InTutorial)
         {
+            _sound.Play(Sound.Stairs);
             // Откладываем: сейчас мы ещё внутри хода героя, а обучение заменит и героя, и карту
             Callable.From(FinishTutorial).CallDeferred();
             return;
         }
         if (IsSinglePlayer)
         {
+            _sound.Play(Sound.Stairs);
             NextFloor();
             return;
         }

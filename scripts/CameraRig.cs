@@ -72,6 +72,7 @@ public partial class CameraRig : Camera3D
             var drift = new Vector3(Mathf.Sin(t * 0.15f) * 10f, 0f, Mathf.Sin(t * 0.1f) * 5f);
             return MenuCenter + drift + BaseOffset * 1.2f;
         }
-        return Target.Position + BaseOffset * _zoom;
+        // Высоту героя не учитываем: иначе камера качалась бы вместе с его походкой
+        return new Vector3(Target.Position.X, 0f, Target.Position.Z) + BaseOffset * _zoom;
     }
 }

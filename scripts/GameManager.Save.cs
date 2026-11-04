@@ -76,6 +76,7 @@ public partial class GameManager
         }
 
         _hud.ClearMessages();
+        _hud.FadeFromBlack();
         _hud.AddMessage($"Забег продолжается. Этаж {_floor}.", InfoColor);
         UpdateFov();
         UpdateHud();

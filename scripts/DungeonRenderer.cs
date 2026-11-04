@@ -22,6 +22,11 @@ public partial class DungeonRenderer : Node3D
     private DungeonTheme _theme;
     private MultiMesh _floors;
     private MultiMesh _walls;
+
+    private const float FogFadeSeconds = 0.22f;
+    private readonly Dictionary<(MultiMesh Mesh, int Index), CellFade> _fades = new();
+    private Color[] _floorTargets; // к какому цвету идёт каждая клетка; null — этаж только что построен
+    private Color[] _wallTargets;
     private MeshInstance3D _stairs;
     private readonly Dictionary<Vector2I, int> _floorIndex = new();
     private readonly Dictionary<Vector2I, int> _wallIndex = new();
@@ -40,6 +45,9 @@ public partial class DungeonRenderer : Node3D
             child.QueueFree();
         _floorIndex.Clear();
         _wallIndex.Clear();
+        _fades.Clear();
+        _floorTargets = null;
+        _wallTargets = null;
         _torches.Clear();
         _doors.Clear();
         _secretWalls.Clear();
@@ -119,14 +127,20 @@ public partial class DungeonRenderer : Node3D
     /// </summary>
     public void UpdateVisibility(HashSet<Vector2I> visible)
     {
+        // Первое обновление нового этажа — сразу, без перехода: сравнивать ещё не с чем
+        bool snap = _floorTargets == null;
+        _floorTargets ??= new Color[_floorIndex.Count];
+        _wallTargets ??= new Color[_wallIndex.Count];
+        bool animate = !snap && Effects.Enabled && Settings.AnimationScale > 0f;
+
         foreach (var (cell, index) in _floorIndex)
         {
             // Шахматный узор на полу помогает глазу считать клетки
             var baseColor = (cell.X + cell.Y) % 2 == 0 ? _theme.Floor : _theme.Floor.Darkened(0.12f);
-            _floors.SetInstanceColor(index, CellColor(cell, baseColor, visible));
+            SetCellColor(_floors, _floorTargets, index, CellColor(cell, baseColor, visible), animate);
         }
         foreach (var (cell, index) in _wallIndex)
-            _walls.SetInstanceColor(index, CellColor(cell, _theme.Wall, visible));
+            SetCellColor(_walls, _wallTargets, index, CellColor(cell, _theme.Wall, visible), animate);
 
         foreach (var (cell, wall) in _secretWalls)
             ((StandardMaterial3D)((BoxMesh)wall.Mesh).Material).AlbedoColor = CellColor(cell, _theme.Wall, visible);
@@ -147,6 +161,47 @@ public partial class DungeonRenderer : Node3D
             node.Visible = IsExplored(cell);
 
         UpdateTraps();
+    }
+
+    /// <summary>Переход цвета одной клетки: туман войны не щёлкает, а плавно наплывает.</summary>
+    private sealed class CellFade
+    {
+        public Color From;
+        public Color To;
+        public float Time; // от 0 до 1
+
+        public Color Current => From.Lerp(To, Time * Time * (3f - 2f * Time)); // плавный разгон и торможение
+    }
+
+    /// <summary>Запоминаем цель; анимируем только изменившиеся клетки — обычно их десятки, а не тысячи.</summary>
+    private void SetCellColor(MultiMesh mesh, Color[] targets, int index, Color color, bool animate)
+    {
+        if (targets[index] == color)
+            return;
+        var key = (mesh, index);
+        if (!animate)
+        {
+            _fades.Remove(key);
+            targets[index] = color;
+            mesh.SetInstanceColor(index, color);
+            return;
+        }
+        var from = _fades.TryGetValue(key, out var running) ? running.Current : targets[index];
+        targets[index] = color;
+        _fades[key] = new CellFade { From = from, To = color };
+    }
+
+    public override void _Process(double delta)
+    {
+        if (_fades.Count == 0)
+            return;
+        foreach (var (key, fade) in _fades.ToList())
+        {
+            fade.Time = Mathf.Min(fade.Time + (float)delta / (FogFadeSeconds * Settings.AnimationScale), 1f);
+            key.Mesh.SetInstanceColor(key.Index, fade.Current);
+            if (fade.Time >= 1f)
+                _fades.Remove(key);
+        }
     }
 
     /// <summary>Создаём узлы для только что обнаруженных ловушек и убираем сработавшие одноразовые.</summary>

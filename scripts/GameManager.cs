@@ -251,6 +251,8 @@ public partial class GameManager : Node3D, IGameWorld
         SetupCoop();
         SetupTutorial();
         ShowMainMenu();
+        if (RunSoundTools())
+            return;
         if (_netTestRole != null)
             StartNetTest();
     }
@@ -664,6 +666,8 @@ public partial class GameManager : Node3D, IGameWorld
         }
         PlaceParty();
         _camera.SnapToTarget();
+        if (!IsTestRun)
+            _hud.FadeFromBlack(); // камера перескочила на новый этаж — прячем скачок за затемнением
 
         int enemyCount = Math.Min(2 + _floor * 3 / 2, 22); // подобрано по симуляциям
         enemyCount = (int)MathF.Round(enemyCount * (1f + _partyEnemiesPerHero * ExtraHeroWeight));
