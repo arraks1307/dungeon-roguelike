@@ -95,11 +95,20 @@ public partial class GameManager
         Effects.Projectile(this, hero.GridPos, target.GridPos, hero.Class.Color);
         _sound.Play(Sound.Shoot);
         bool crit = _rng.Next(100) < hero.Bonuses.Crit;
-        int damage = RollDamage(hero, target) + 3;
+        int damage = ApplyEnemyShield(target, RollDamage(hero, target) + 3 + PerkBonusDamage(hero, target));
         if (crit)
             damage *= 2;
         _hud.AddMessage($"Меткий выстрел{(crit ? " — в яблочко!" : "")}: {target.DisplayName} получает {damage}.");
+        var bounce = hero.Has(PerkEffect.Ricochet)
+            ? _enemies.Where(enemy => enemy != target && ChebyshevDistance(enemy.GridPos, target.GridPos) <= 3).OrderBy(enemy => ChebyshevDistance(enemy.GridPos, target.GridPos)).FirstOrDefault()
+            : null;
+        var from = target.GridPos;
         HitEnemy(target, damage, crit ? CritColor : Colors.White);
+        if (bounce != null)
+        {
+            Effects.Projectile(this, from, bounce.GridPos, hero.Class.Color);
+            HitEnemy(bounce, Math.Max(1, damage / 2), Colors.White);
+        }
         return true;
     }
 
@@ -130,7 +139,8 @@ public partial class GameManager
         _sound.Play(Sound.Fire);
         _camera.Shake(0.2f);
         _hud.AddMessage($"Огненный шар взрывается: {damage} урона!", InfoColor);
-        var victims = _enemies.Where(enemy => ChebyshevDistance(enemy.GridPos, target.GridPos) <= 1).ToList();
+        int radius = hero.Has(PerkEffect.Pyromancer) ? 2 : 1;
+        var victims = _enemies.Where(enemy => ChebyshevDistance(enemy.GridPos, target.GridPos) <= radius).ToList();
         foreach (var enemy in victims)
             HitEnemy(enemy, damage, fire);
         return true;
@@ -207,7 +217,7 @@ public partial class GameManager
         {
             foreach (var hero in _heroes.Where(hero => hero.IsBot))
                 while (hero.PendingLevelUps > 0)
-                    ChoosePerk(hero, PerkIndex(ClassCatalog.RollPerks(_rng)[0]));
+                    ChoosePerk(hero, PerkIndex(ClassCatalog.RollPerks(_rng, hero)[0]));
         }
 
         var local = _localHero;
@@ -217,13 +227,13 @@ public partial class GameManager
         {
             // Бот сетевой самопроверки: выбор уходит в общий поток, следующий — когда этот вернётся
             if (_isNetworkGame)
-                SubmitLocalAction(HeroAction.Perk(PerkIndex(ClassCatalog.RollPerks(_uiRng)[0])));
+                SubmitLocalAction(HeroAction.Perk(PerkIndex(ClassCatalog.RollPerks(_uiRng, local)[0])));
             return;
         }
         if (_state != GameState.Playing)
             return;
         _state = GameState.LevelUp;
-        _levelUpPanel.Open(local.Level - local.PendingLevelUps + 1, ClassCatalog.RollPerks(_uiRng));
+        _levelUpPanel.Open(local.Level - local.PendingLevelUps + 1, ClassCatalog.RollPerks(_uiRng, local));
     }
 
     private void OnPerkChosen(Perk perk)

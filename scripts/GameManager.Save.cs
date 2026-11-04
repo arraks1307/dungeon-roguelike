@@ -50,6 +50,7 @@ public partial class GameManager
                 Item = pair.Value.Item == null ? null : ItemSave.From(pair.Value.Item),
             }).ToList(),
             Chests = _chests.Values.Select(chest => chest.CreateSave()).ToList(),
+            Shrines = _shrines.Values.Select(shrine => shrine.CreateSave()).ToList(),
         };
 
         if (_merchant != null)
@@ -132,7 +133,7 @@ public partial class GameManager
             if (type == null)
                 continue;
             var enemy = SpawnEnemy(type, new Vector2I(save.X, save.Y));
-            enemy.RestoreState(save);
+            enemy.RestoreState(save, EliteHp);
             if (save.Boss)
                 _boss = enemy;
         }
@@ -149,6 +150,9 @@ public partial class GameManager
 
         foreach (var save in data.Chests)
             PlaceChest(new Vector2I(save.X, save.Y), save.Mimic, save.Secret);
+
+        foreach (var save in data.Shrines ?? new List<ShrineSave>())
+            PlaceShrine(new Vector2I(save.X, save.Y), save.Kind, save.Explained);
 
         if (data.Merchant != null)
         {

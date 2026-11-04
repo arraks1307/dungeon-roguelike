@@ -46,6 +46,7 @@ public partial class GameManager : Node3D, IGameWorld
     private const int MapHeight = 32;
     private const int FovRadius = 8;
     private const int ChaseDistance = 20;
+    private const float MinDamageShare = 0.35f;
     // Сила врагов в отряде — за каждого героя сверх первого (подобрано симуляциями, см. --party-tune)
     private float _partyHpPerHero = 0.6f;      // здоровье врагов: +60%
     private float _partyEnemiesPerHero = 0.3f; // число врагов на этаже: +30%
@@ -115,14 +116,14 @@ public partial class GameManager : Node3D, IGameWorld
 
     /// <summary>Клетку занимают живые герои (призраки — нет), враги, сундуки и торговец.</summary>
     public bool IsOccupied(Vector2I cell) =>
-        LivingHeroes.Any(hero => hero.GridPos == cell) || EnemyAt(cell) != null || _chests.ContainsKey(cell) ||
+        LivingHeroes.Any(hero => hero.GridPos == cell) || EnemyAt(cell) != null || _chests.ContainsKey(cell) || _shrines.ContainsKey(cell) ||
         (_merchant != null && _merchant.GridPos == cell);
 
     public bool IsVisibleToPlayer(Vector2I cell) => _visible.Contains(cell);
 
-    public void EnemyAttacksPlayer(Enemy enemy, Player target, bool ranged)
+    public void EnemyAttacksPlayer(Enemy enemy, Player target, bool ranged, float power = 1f)
     {
-        if (ranged)
+        if (ranged && power == 1f)
         {
             Effects.Projectile(this, enemy.GridPos, target.GridPos, enemy.Type.Color);
             _sound.Play(Sound.Shoot);
@@ -132,7 +133,7 @@ public partial class GameManager : Node3D, IGameWorld
             enemy.PlayAttack(target.GridPos);
         }
 
-        int damage = RollDamage(enemy, target);
+        int damage = ApplyGuard(target, (int)MathF.Round(RollDamage(enemy, target) * power), ranged);
         target.TakeDamage(damage);
         if (IsInvulnerable)
             target.Heal(damage);
@@ -674,9 +675,10 @@ public partial class GameManager : Node3D, IGameWorld
             _hud.FadeFromBlack(); // камера перескочила на новый этаж — прячем скачок за затемнением
 
         int enemyCount = Math.Min(2 + _floor * 3 / 2, 22); // подобрано по симуляциям
-        enemyCount = (int)MathF.Round(enemyCount * (1f + _partyEnemiesPerHero * ExtraHeroWeight));
+        enemyCount = (int)MathF.Round(enemyCount * (1f + _partyEnemiesPerHero * ExtraHeroWeight + _difficulty.ExtraEnemies));
         SpawnEnemies(bossFloor ? enemyCount / 2 : enemyCount);
         SpawnChests();
+        SpawnShrines();
         SpawnItems(_rng.Next(3, 6) + _difficulty.ItemsPerFloor + (_heroes.Count - 1));
         SpawnGold(_rng.Next(2, 5) + (_heroes.Count - 1));
         if (!bossFloor)
@@ -735,6 +737,9 @@ public partial class GameManager : Node3D, IGameWorld
         foreach (var chest in _chests.Values)
             chest.QueueFree();
         _chests.Clear();
+        foreach (var shrine in _shrines.Values)
+            shrine.QueueFree();
+        _shrines.Clear();
         _merchant?.QueueFree();
         _merchant = null;
         _boss = null;
@@ -758,6 +763,7 @@ public partial class GameManager : Node3D, IGameWorld
             return false;
         }
 
+        hero.IsGuarding = false; // стойка держится только до следующего действия
         int floorBefore = _floor;
         bool spent = action.Kind switch
         {
@@ -797,7 +803,11 @@ public partial class GameManager : Node3D, IGameWorld
     private bool TryMove(Player hero, Vector2I direction)
     {
         if (direction == Vector2I.Zero)
-            return true; // пропустить ход
+        {
+            hero.IsGuarding = true; // пропуск хода — это защитная стойка
+            Effects.FloatingText(this, hero.GridPos, "Стойка", InfoColor);
+            return true;
+        }
 
         var target = hero.GridPos + direction;
         if (!_map.CanMove(hero.GridPos, target))
@@ -821,6 +831,8 @@ public partial class GameManager : Node3D, IGameWorld
             OpenChest(hero, chest);
             return true;
         }
+        if (_shrines.TryGetValue(target, out var shrine))
+            return UseShrine(hero, shrine);
         if (_map.Get(target) == Tile.Door)
         {
             OpenDoor(target); // открыть дверь — отдельное действие, сам шаг будет следующим ходом
@@ -960,10 +972,11 @@ public partial class GameManager : Node3D, IGameWorld
         hero.PlayAttack(enemy.GridPos);
         hero.ChargeSkills();
         var bonuses = hero.Bonuses;
-        int damage = RollDamage(hero, enemy) + bonuses.FireDamage;
+        int damage = RollDamage(hero, enemy) + bonuses.FireDamage + PerkBonusDamage(hero, enemy);
         bool crit = _rng.Next(100) < bonuses.Crit;
         if (crit)
             damage *= 2;
+        damage = ApplyEnemyShield(enemy, damage);
 
         enemy.TakeDamage(damage);
         Effects.FloatingText(this, enemy.GridPos, crit ? $"{damage}!" : damage.ToString(), crit ? CritColor : Colors.White);
@@ -980,6 +993,7 @@ public partial class GameManager : Node3D, IGameWorld
             Effects.FloatingText(this, hero.GridPos, $"+{hero.Hp - before}", GoodColor);
         }
 
+        ApplyMeleePerks(hero, enemy, damage);
         if (enemy.IsDead)
             KillEnemy(enemy);
         else
@@ -999,6 +1013,9 @@ public partial class GameManager : Node3D, IGameWorld
         _sound.Play(Sound.Kill);
 
         // Опыт — раньше проверки босса: иначе экран победы показал бы уровень без опыта за финального босса
+        foreach (var hero in LivingHeroes.Where(hero => hero.Has(PerkEffect.Arcane)))
+            hero.ChargeSkills();
+
         bool anyLevelUp = false;
         foreach (var hero in LivingHeroes)
         {
@@ -1076,7 +1093,9 @@ public partial class GameManager : Node3D, IGameWorld
         {
             if (!TryFindFreeCell(out var cell))
                 return;
-            SpawnEnemy(available[_rng.Next(available.Length)], cell);
+            var enemy = SpawnEnemy(available[_rng.Next(available.Length)], cell);
+            if (_rng.NextDouble() < _difficulty.EliteChance)
+                enemy.MakeElite(EliteHp);
         }
     }
 
@@ -1134,10 +1153,13 @@ public partial class GameManager : Node3D, IGameWorld
             _merchant.Visible = _map.Explored[_merchant.GridPos.X, _merchant.GridPos.Y];
         foreach (var (cell, chest) in _chests)
             chest.Visible = _map.Explored[cell.X, cell.Y];
+        foreach (var (cell, shrine) in _shrines)
+            shrine.Visible = _map.Explored[cell.X, cell.Y];
 
         var visibleEnemies = _enemies.Where(enemy => enemy.Visible).Select(enemy => enemy.GridPos).ToList();
         var markers = _floorItems.Select(pair => (pair.Key, pair.Value.MapColor)).ToList();
         markers.AddRange(_chests.Keys.Select(cell => (cell, new Color(0.75f, 0.5f, 0.2f))));
+        markers.AddRange(_shrines.Values.Select(shrine => (shrine.GridPos, shrine.Glow)));
         markers.AddRange(_map.Traps.Where(pair => pair.Value.Revealed).Select(pair => (pair.Key, new Color(0.9f, 0.2f, 0.2f))));
         if (_merchant != null && _merchant.Visible)
             markers.Add((_merchant.GridPos, new Color(0.7f, 0.4f, 1f)));
@@ -1161,7 +1183,14 @@ public partial class GameManager : Node3D, IGameWorld
 
     private static int ChebyshevDistance(Vector2I a, Vector2I b) => Math.Max(Math.Abs(a.X - b.X), Math.Abs(a.Y - b.Y));
 
-    /// <summary>Урон = атака ± 1 минус защита цели, но не меньше 1.</summary>
-    private int RollDamage(Actor attacker, Actor defender) =>
-        Math.Max(1, attacker.Attack + _rng.Next(-1, 2) - defender.Defense);
+    /// <summary>
+    /// Урон = атака ± 1 минус защита цели. Защита снимает не всё: по герою проходит минимум треть
+    /// с лишним удара, иначе броня превращала бы любого врага в безобидного (1 урона за удар).
+    /// </summary>
+    private int RollDamage(Actor attacker, Actor defender)
+    {
+        int roll = attacker.Attack + _rng.Next(-1, 2);
+        int floor = defender is Player ? (int)MathF.Ceiling(roll * MinDamageShare) : 1;
+        return Math.Max(Math.Max(1, floor), roll - defender.Defense);
+    }
 }

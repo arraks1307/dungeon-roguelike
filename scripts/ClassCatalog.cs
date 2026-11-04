@@ -31,7 +31,21 @@ public record ClassDef(
     ItemTemplate[] StartingItems, SkillDef[] Skills);
 
 /// <summary>Улучшение, которое выбирают при повышении уровня.</summary>
-public record Perk(string Name, string Description, Stats Bonus, int CooldownReduction = 0);
+public record Perk(string Name, string Description, Stats Bonus, int CooldownReduction = 0,
+    PlayerClass? Only = null, PerkEffect Effect = PerkEffect.None);
+
+/// <summary>Улучшения, которые меняют правила, а не просто добавляют числа.</summary>
+public enum PerkEffect
+{
+    None,
+    Cleave,    // удар задевает всех врагов рядом
+    Rage,      // чем меньше здоровья, тем сильнее удар
+    Ricochet,  // меткий выстрел попадает ещё и в соседнюю цель
+    Hunter,    // первый удар по невредимому врагу сильнее
+    Pyromancer, // огненный шар взрывается шире
+    Arcane,    // убийство заряжает способности
+    Sentinel,  // стойка держит втрое больше
+}
 
 public static class ClassCatalog
 {
@@ -84,6 +98,13 @@ public static class ClassCatalog
         new("Шипастая кожа", "+2 урона шипами атакующим", new Stats(Thorns: 2)),
         new("Огненная кровь", "+2 урона огнём при каждом ударе", new Stats(FireDamage: 2)),
         new("Сосредоточенность", "способностям нужно на 1 атаку меньше", default, CooldownReduction: 1),
+        new("Страж", "стойка пропускает только четверть урона", default, Effect: PerkEffect.Sentinel),
+        new("Поток силы", "каждое убийство заряжает способности", default, Effect: PerkEffect.Arcane),
+        new("Рассекающий удар", "удар задевает всех врагов рядом с тобой", default, Only: PlayerClass.Warrior, Effect: PerkEffect.Cleave),
+        new("Ярость", "+1 к удару за каждую потерянную четверть здоровья", default, Only: PlayerClass.Warrior, Effect: PerkEffect.Rage),
+        new("Рикошет", "меткий выстрел попадает и в ближайшую к цели", default, Only: PlayerClass.Ranger, Effect: PerkEffect.Ricochet),
+        new("Охотник", "+4 к удару по невредимому врагу", default, Only: PlayerClass.Ranger, Effect: PerkEffect.Hunter),
+        new("Пиромант", "огненный шар взрывается шире", default, Only: PlayerClass.Mage, Effect: PerkEffect.Pyromancer),
     };
 
     /// <summary>«1 атаку», «3 атаки», «5 атак» — русское окончание зависит от числа.</summary>
@@ -96,6 +117,21 @@ public static class ClassCatalog
 
     public static Perk FindPerk(string name) => Array.Find(Perks, perk => perk.Name == name);
 
-    /// <summary>Три разных случайных улучшения на выбор.</summary>
-    public static List<Perk> RollPerks(Random rng) => Perks.OrderBy(_ => rng.Next()).Take(3).ToList();
+    /// <summary>
+    /// Три разных улучшения на выбор: подходят классу героя, правила меняются только один раз,
+    /// и если доступно особое улучшение, одно такое всегда попадает в тройку.
+    /// </summary>
+    public static List<Perk> RollPerks(Random rng, Player hero)
+    {
+        var pool = Perks
+            .Where(perk => perk.Only == null || perk.Only == hero.Class.Class)
+            .Where(perk => perk.Effect == PerkEffect.None || !hero.Has(perk.Effect))
+            .OrderBy(_ => rng.Next())
+            .ToList();
+        var special = pool.FirstOrDefault(perk => perk.Effect != PerkEffect.None);
+        var result = pool.Where(perk => perk != special).Take(special == null ? 3 : 2).ToList();
+        if (special != null)
+            result.Insert(0, special);
+        return result;
+    }
 }

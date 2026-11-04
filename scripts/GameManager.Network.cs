@@ -455,6 +455,7 @@ public partial class GameManager
                 Add(hero.SkillCooldowns[0]);
                 Add(hero.SkillCooldowns[1]);
                 Add(hero.HasActed ? 1 : 0);
+                Add(hero.IsGuarding ? 1 : 0);
                 Add(hero.PendingLevelUps);
             }
             foreach (var enemy in _enemies)
@@ -467,6 +468,7 @@ public partial class GameManager
             Add(_floorItems.Keys.Sum(cell => (long)cell.X * 64 + cell.Y));
             Add(_floorItems.Count);
             Add(_chests.Count);
+            Add(_shrines.Count);
             Add(_merchant?.Stock.Count ?? -1);
             Add(_merchant?.Stock.Sum(item => (long)item.Price) ?? -1);
             Add(_descentRequested ? 1 : 0);

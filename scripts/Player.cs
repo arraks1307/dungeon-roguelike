@@ -49,6 +49,9 @@ public partial class Player : Actor
     /// <summary>Уже действовал в этом раунде — ждёт, пока сходят остальные, потом ходят враги.</summary>
     public bool HasActed { get; set; }
 
+    /// <summary>Защитная стойка: герой пропустил ход и держит оборону до своего следующего действия.</summary>
+    public bool IsGuarding { get; set; }
+
     /// <summary>Сколько улучшений этот герой ещё должен выбрать (за раунд можно получить несколько уровней).</summary>
     public int PendingLevelUps { get; set; }
 
@@ -327,6 +330,17 @@ public partial class Player : Actor
     }
 
     public int CooldownReduction => _perks.Sum(perk => perk.CooldownReduction);
+
+    public bool Has(PerkEffect effect) => _perks.Any(perk => perk.Effect == effect);
+
+    public IEnumerable<Perk> Perks => _perks;
+
+    /// <summary>Постоянная прибавка к атаке (алтарь крови). Хранится в базовой атаке, поэтому попадает в сохранение.</summary>
+    public void AddPermanentAttack(int amount)
+    {
+        _baseAttack += amount;
+        RecalculateStats();
+    }
 
     /// <summary>
     /// Герой атаковал: способности заряжаются на одну атаку. except — способность, которой он

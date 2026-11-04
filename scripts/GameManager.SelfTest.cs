@@ -120,6 +120,7 @@ public partial class GameManager
                     "easy" => Difficulties.Easy,
                     "normal" => Difficulties.Normal,
                     "hard" => Difficulties.Hard,
+                    "nightmare" => Difficulties.Nightmare,
                     _ => null,
                 };
             else if (arg.StartsWith("--simulate="))
@@ -309,6 +310,9 @@ public partial class GameManager
             case "pause":
                 Pause();
                 break;
+            case "tactics":
+                RunTacticsTest();
+                break;
             case "charge":
                 RunChargeTest();
                 break;
@@ -471,6 +475,109 @@ public partial class GameManager
         PerformHeroAction(hero, HeroAction.Move(step));
     }
 
+    /// <summary>Новые правила боя: каждый враг разыгрывается настоящими ходами, числа печатаются.</summary>
+    private void RunTacticsTest()
+    {
+        var hero = _localHero;
+        Vector2I Free(int skip = 0) => DungeonMap.Directions
+            .Select(d => hero.GridPos + d).Where(c => _map.Get(c) == Tile.Floor && _map.CanMove(hero.GridPos, c) && !IsOccupied(c)).Skip(skip).First();
+        Enemy Place(string name, Vector2I? at = null)
+        {
+            foreach (var old in _enemies.ToList())
+            {
+                _enemies.Remove(old);
+                old.QueueFree();
+            }
+            var enemy = SpawnEnemy(Enemy.FindType(name), at ?? Free());
+            enemy.Alerted = true;
+            hero.Heal(hero.MaxHp);
+            return enemy;
+        }
+        void Wait() => PerformHeroAction(hero, HeroAction.Wait);
+
+        var brute = Place("Громила");
+        Wait();
+        int hp = hero.Hp;
+        var away = DungeonMap.Directions.Where(d => _map.CanMove(hero.GridPos, hero.GridPos + d) && !IsOccupied(hero.GridPos + d) && _map.Get(hero.GridPos + d) == Tile.Floor
+            && !_map.AreAdjacent(brute.GridPos, hero.GridPos + d) && hero.GridPos + d != brute.GridPos).FirstOrDefault();
+        PerformHeroAction(hero, HeroAction.Move(away));
+        GD.Print($"Тактика: Громила: отошёл, здоровье {hp} → {hero.Hp} (должно не измениться)");
+
+        foreach (bool guard in new[] { false, true })
+        {
+            brute = Place("Громила");
+            Wait();
+            hp = hero.Hp;
+            PerformHeroAction(hero, guard ? HeroAction.Wait : HeroAction.Move(brute.GridPos - hero.GridPos));
+            GD.Print($"Тактика: Громила попал, стойка {guard}: здоровье {hp} → {hero.Hp}");
+        }
+
+        var bomber = Place("Подрывник");
+        Wait();
+        hp = hero.Hp;
+        Wait();
+        GD.Print($"Тактика: Подрывник взорвался в стойке: здоровье {hp} → {hero.Hp}, враг жив: {!bomber.IsDead}, врагов {_enemies.Count}");
+
+        var shield = Place("Щитоносец");
+        for (int i = 0; i < 4; i++)
+        {
+            int before = shield.Hp;
+            bool up = shield.ShieldUp;
+            if (shield.IsDead)
+                break;
+            PerformHeroAction(hero, HeroAction.Move(shield.GridPos - hero.GridPos));
+            GD.Print($"Тактика: Щитоносец: щит {up}, здоровье {before} → {shield.Hp}");
+        }
+
+        var goblin = Place("Гоблин");
+        var shaman = SpawnEnemy(Enemy.FindType("Шаман"), Free(0));
+        shaman.Alerted = true;
+        goblin.TakeDamage(5);
+        hp = goblin.Hp;
+        Wait();
+        GD.Print($"Тактика: Шаман лечит гоблина: {hp} → {goblin.Hp}/{goblin.MaxHp}");
+
+        var elite = Place("Гоблин");
+        int plainHp = elite.MaxHp, plainAttack = elite.Attack;
+        elite.MakeElite(EliteHp);
+        GD.Print($"Тактика: {elite.DisplayName}: здоровье {plainHp} → {elite.MaxHp}, атака {plainAttack} → {elite.Attack}, опыт {elite.ExperienceReward}");
+
+        Place("Слизень", _map.StartPos == hero.GridPos ? null : null);
+        foreach (var enemy in _enemies.ToList())
+        {
+            _enemies.Remove(enemy);
+            enemy.QueueFree();
+        }
+        foreach (ShrineKind kind in System.Enum.GetValues<ShrineKind>())
+        {
+            var cell = Free();
+            PlaceShrine(cell, kind, explained: false);
+            hero.TakeDamage(5);
+            hero.Gold = 500;
+            int attack = hero.Attack, life = hero.Hp, gold = hero.Gold, bag = hero.Inventory.Items.Count;
+            bool first = PerformHeroAction(hero, HeroAction.Move(cell - hero.GridPos));
+            bool second = PerformHeroAction(hero, HeroAction.Move(cell - hero.GridPos));
+            GD.Print($"Тактика: {kind}: первый шаг тратит ход {first}, второй {second}, здоровье {life} → {hero.Hp}, атака {attack} → {hero.Attack}, золото {gold} → {hero.Gold}, сумка {bag} → {hero.Inventory.Items.Count}, осталось на этаже {_shrines.ContainsKey(cell)}");
+        }
+
+        foreach (var playerClass in ClassCatalog.All)
+        {
+            hero.ResetStats(playerClass);
+            GD.Print($"Тактика: улучшения {playerClass.Name}: {string.Join(", ", ClassCatalog.RollPerks(_rng, hero).Select(perk => perk.Name))}");
+        }
+
+        var saved = Place("Гоблин");
+        saved.MakeElite(EliteHp);
+        PlaceShrine(Free(), ShrineKind.Fountain, explained: true);
+        string before2 = WorldSummary();
+        SaveRun();
+        int shrines = _shrines.Count;
+        ShowMainMenu();
+        ContinueGame();
+        GD.Print($"Тактика: загрузка: святынь {shrines} → {_shrines.Count}, элитных {_enemies.Count(enemy => enemy.IsElite)}, сводка {(before2 == WorldSummary() ? "СОВПАДАЕТ" : "РАЗЛИЧАЕТСЯ")}");
+        GetTree().Quit();
+    }
+
     /// <summary>Правило зарядки: ходы не заряжают, удар и вторая боевая способность — заряжают.</summary>
     private void RunChargeTest()
     {
@@ -566,7 +673,7 @@ public partial class GameManager
         switch (_state)
         {
             case GameState.LevelUp:
-                OnPerkChosen(ClassCatalog.RollPerks(_rng)[0]);
+                OnPerkChosen(ClassCatalog.RollPerks(_rng, _localHero)[0]);
                 return;
             case GameState.Shop:
                 CloseShop(); // автопилот случайно зашёл к торговцу

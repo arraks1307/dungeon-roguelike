@@ -20,6 +20,10 @@ public enum EnemyBehavior
     Boss,   // Король орков: ближний бой + призыв помощников
     Necromancer, // держит дистанцию, стреляет и поднимает скелетов
     Overlord,    // финальный босс: всё сразу, на половине здоровья звереет
+    Brute,       // замахивается на клетку, через ход сильно бьёт: можно отойти
+    Bomber,      // рядом с героем поджигает фитиль и через ход взрывается
+    Shieldbearer, // чередует глухую защиту и удар
+    Shaman,      // лечит раненых врагов, а без дела стреляет издалека
 }
 
 /// <summary>
@@ -48,6 +52,10 @@ public partial class Enemy : Actor
         new("Призрак", 7, 4, 0, new Color(0.75f, 0.8f, 1f), EnemyShape.Capsule, EnemyBehavior.Ghost, Slow: true, MinFloor: 3),
         new("Орк", 18, 5, 1, new Color(0.85f, 0.25f, 0.2f), EnemyShape.Box, EnemyBehavior.Melee, Slow: false, MinFloor: 3),
         new("Скелет", 14, 5, 1, new Color(0.88f, 0.86f, 0.78f), EnemyShape.Capsule, EnemyBehavior.Melee, Slow: false, MinFloor: 11),
+        new("Подрывник", 6, 4, 0, new Color(1f, 0.5f, 0.1f), EnemyShape.Sphere, EnemyBehavior.Bomber, Slow: false, MinFloor: 2),
+        new("Щитоносец", 14, 4, 1, new Color(0.55f, 0.6f, 0.75f), EnemyShape.Box, EnemyBehavior.Shieldbearer, Slow: false, MinFloor: 3),
+        new("Громила", 24, 6, 1, new Color(0.5f, 0.35f, 0.6f), EnemyShape.Box, EnemyBehavior.Brute, Slow: false, MinFloor: 4),
+        new("Шаман", 12, 3, 0, new Color(0.3f, 0.9f, 0.6f), EnemyShape.Cone, EnemyBehavior.Shaman, Slow: false, MinFloor: 5),
         // Мимик сам по этажам не бродит (MinFloor 99) — он появляется только из сундука
         new("Мимик", 20, 6, 1, new Color(0.55f, 0.33f, 0.14f), EnemyShape.Box, EnemyBehavior.Melee, Slow: false, MinFloor: 99),
     };
@@ -79,7 +87,34 @@ public partial class Enemy : Actor
     public bool IsSummoned { get; set; }
 
     /// <summary>Опыт за победу над этим врагом.</summary>
-    public int ExperienceReward => IsBoss ? 6 : IsSummoned ? 0 : 1;
+    public int ExperienceReward => IsBoss ? 6 : IsSummoned ? 0 : IsElite ? 2 : 1;
+
+    /// <summary>Элитный враг: крупнее, крепче и сильнее обычного, опыта даёт вдвое больше.</summary>
+    public bool IsElite { get; private set; }
+
+    /// <summary>Щит поднят: удары оружием и стрелы почти не проходят, а магия проходит.</summary>
+    public bool ShieldUp { get; private set; }
+
+    private const float HeavyHitPower = 2.2f;
+    private const float ExplosionPower = 3f;
+    private const int ShamanRange = 6;
+
+    private Vector2I? _heavyCell;   // куда Громила обрушит удар на следующем ходу
+    private bool _fuseLit;          // Подрывник взорвётся на следующем ходу
+    private MeshInstance3D _warning;
+    private MeshInstance3D _shield;
+
+    public void MakeElite(float hpScale)
+    {
+        IsElite = true;
+        DisplayName = $"Элитный {Type.Name.ToLower()}";
+        MaxHp = Mathf.RoundToInt(MaxHp * hpScale);
+        SetHp(MaxHp);
+        Attack += 1 + Attack / 4;
+        Scale = Vector3.One * 1.25f;
+    }
+
+    public void RestoreHp(int amount) => SetHp(Hp + amount);
 
     private static readonly Color IceColor = new(0.55f, 0.85f, 1f);
 
@@ -96,6 +131,8 @@ public partial class Enemy : Actor
     public void Freeze(int turns)
     {
         FrozenTurns = turns;
+        CancelThreat(); // мороз сбивает замах и гасит фитиль
+
         BodyMaterial.AlbedoColor = DisplayColor;
     }
 
@@ -112,11 +149,14 @@ public partial class Enemy : Actor
         Alerted = Alerted,
         Boss = IsBoss,
         Summoned = IsSummoned,
+        Elite = IsElite,
     };
 
     /// <summary>Вернуть состояние из сохранения (вызывается после Setup).</summary>
-    public void RestoreState(EnemySave save)
+    public void RestoreState(EnemySave save, float eliteHp)
     {
+        if (save.Elite)
+            MakeElite(eliteHp);
         SetHp(Math.Max(save.Hp, 1));
         Alerted = save.Alerted;
         IsSummoned = save.Summoned;
@@ -166,6 +206,61 @@ public partial class Enemy : Actor
         AddEyes(type);
         if (type.Behavior == EnemyBehavior.Ghost)
             MakeTranslucent(0.45f);
+        if (type.Behavior == EnemyBehavior.Shieldbearer)
+            CreateShield();
+    }
+
+    private void CreateShield()
+    {
+        _shield = Part(new BoxMesh { Size = new Vector3(0.62f, 0.72f, 0.08f) }, new Color(0.8f, 0.85f, 0.95f), new Vector3(0f, 0.42f, 0.4f), glow: 0.3f);
+        AddChild(_shield);
+        SetShield(true);
+    }
+
+    private void SetShield(bool up)
+    {
+        ShieldUp = up;
+        if (_shield != null)
+            _shield.Visible = up;
+    }
+
+    /// <summary>Красное кольцо на полу: сюда придётся удар. Стоит, пока угроза не сработает.</summary>
+    private void ShowWarning(Vector2I cell, float size)
+    {
+        ClearWarning();
+        _warning = new MeshInstance3D
+        {
+            Mesh = new TorusMesh
+            {
+                InnerRadius = 0.36f * size,
+                OuterRadius = 0.46f * size,
+                Material = new StandardMaterial3D
+                {
+                    AlbedoColor = new Color(1f, 0.15f, 0.1f),
+                    EmissionEnabled = true,
+                    Emission = new Color(1f, 0.15f, 0.1f),
+                    EmissionEnergyMultiplier = 2.5f,
+                    ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded,
+                },
+            },
+            TopLevel = true, // кольцо стоит на месте, даже если враг шевелится
+            CastShadow = GeometryInstance3D.ShadowCastingSetting.Off,
+        };
+        AddChild(_warning);
+        _warning.GlobalPosition = GridToWorld(cell) + new Vector3(0f, 0.06f, 0f);
+    }
+
+    private void ClearWarning()
+    {
+        _warning?.QueueFree();
+        _warning = null;
+    }
+
+    private void CancelThreat()
+    {
+        _heavyCell = null;
+        _fuseLit = false;
+        ClearWarning();
     }
 
     /// <summary>
@@ -300,10 +395,88 @@ public partial class Enemy : Actor
             case EnemyBehavior.Overlord:
                 OverlordTurn(world, target, stepsToTarget);
                 break;
+            case EnemyBehavior.Brute:
+                BruteTurn(world, target);
+                break;
+            case EnemyBehavior.Bomber:
+                BomberTurn(world, target);
+                break;
+            case EnemyBehavior.Shieldbearer:
+                ShieldbearerTurn(world, target);
+                break;
+            case EnemyBehavior.Shaman:
+                ShamanTurn(world, target, stepsToTarget);
+                break;
             default:
                 MeleeTurn(world, target);
                 break;
         }
+    }
+
+    /// <summary>Замах и удар через ход. Герой видит клетку и успевает уйти или встать в стойку.</summary>
+    private void BruteTurn(IGameWorld world, Player target)
+    {
+        if (_heavyCell.HasValue)
+        {
+            var cell = _heavyCell.Value;
+            CancelThreat();
+            world.EnemyHeavyHit(this, cell, HeavyHitPower);
+            return;
+        }
+        if (world.Map.AreAdjacent(GridPos, target.GridPos))
+        {
+            _heavyCell = target.GridPos;
+            ShowWarning(target.GridPos, 1f);
+            world.EnemyTelegraphs(this, $"{DisplayName} заносит оружие!");
+            return;
+        }
+        MeleeTurn(world, target);
+    }
+
+    /// <summary>Рядом с героем поджигает фитиль. Следующий ход — взрыв вокруг себя.</summary>
+    private void BomberTurn(IGameWorld world, Player target)
+    {
+        if (_fuseLit)
+        {
+            CancelThreat();
+            world.EnemyExplodes(this, ExplosionPower);
+            return;
+        }
+        if (world.Map.AreAdjacent(GridPos, target.GridPos))
+        {
+            _fuseLit = true;
+            ShowWarning(GridPos, 3f);
+            world.EnemyTelegraphs(this, $"{DisplayName} поджигает фитиль!");
+            return;
+        }
+        MeleeTurn(world, target);
+    }
+
+    /// <summary>Рядом с героем чередует удар и глухую защиту: бить надо сразу после его атаки.</summary>
+    private void ShieldbearerTurn(IGameWorld world, Player target)
+    {
+        if (!world.Map.AreAdjacent(GridPos, target.GridPos))
+        {
+            SetShield(true);
+            MeleeTurn(world, target);
+            return;
+        }
+        if (ShieldUp)
+        {
+            SetShield(false);
+            world.EnemyAttacksPlayer(this, target, ranged: false);
+            return;
+        }
+        SetShield(true);
+    }
+
+    private void ShamanTurn(IGameWorld world, Player target, int stepsToTarget)
+    {
+        var ally = world.FindHurtAlly(this, ShamanRange);
+        if (ally != null)
+            world.ShamanHeals(this, ally);
+        else
+            ArcherTurn(world, target, stepsToTarget);
     }
 
     private bool _enraged;

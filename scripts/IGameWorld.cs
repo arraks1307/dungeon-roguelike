@@ -26,7 +26,12 @@ public interface IGameWorld
     /// <summary>Видит ли эту клетку отряд (обзор у героев общий).</summary>
     bool IsVisibleToPlayer(Vector2I cell);
 
-    void EnemyAttacksPlayer(Enemy enemy, Player target, bool ranged);
+    void EnemyAttacksPlayer(Enemy enemy, Player target, bool ranged, float power = 1f);
+    void EnemyTelegraphs(Enemy enemy, string text);
+    void EnemyHeavyHit(Enemy enemy, Vector2I cell, float power);
+    void EnemyExplodes(Enemy enemy, float power);
+    Enemy FindHurtAlly(Enemy healer, int range);
+    void ShamanHeals(Enemy shaman, Enemy ally);
     void OpenDoor(Vector2I cell);
 
     /// <summary>Призвать помощников рядом с собой. type = null — случайные слабые враги.</summary>

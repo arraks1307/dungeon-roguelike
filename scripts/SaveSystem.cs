@@ -26,6 +26,7 @@ public class SaveData
     public List<PickupSave> Pickups = new();
     public List<ChestSave> Chests = new();
     public MerchantSave Merchant;
+    public List<ShrineSave> Shrines = new();
 
     // Только для сетевого снимка мира (в файл одиночного сохранения не попадают — там null и нули)
     public List<PartyHeroSave> Party;
@@ -42,6 +43,13 @@ public class PartyHeroSave
     public bool HasActed;
     public int PendingLevelUps;
     public PlayerSave State;
+}
+
+public class ShrineSave
+{
+    public int X, Y;
+    public ShrineKind Kind;
+    public bool Explained;
 }
 
 public class ChestSave
@@ -167,7 +175,7 @@ public class EnemySave
 {
     public string Type;
     public int X, Y, Hp, Frozen;
-    public bool Alerted, Boss, Summoned;
+    public bool Alerted, Boss, Summoned, Elite;
 }
 
 public class PickupSave

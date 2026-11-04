@@ -9,7 +9,7 @@ namespace Roguelike;
 /// </summary>
 public partial class MainMenu : CanvasLayer
 {
-    public const string Version = "v1.5";
+    public const string Version = "v1.6";
 
     private static readonly Color VictoryColor = new(1f, 0.82f, 0.4f);
 
