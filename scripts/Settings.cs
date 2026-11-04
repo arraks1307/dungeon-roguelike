@@ -20,6 +20,7 @@ public enum GraphicsQuality
 public class GameSettings
 {
     public int Volume { get; set; } = 80;
+    public int Sounds { get; set; } = 100;
     public int Music { get; set; } = 60;
     public bool Fullscreen { get; set; }
     public GraphicsQuality Graphics { get; set; } = GraphicsQuality.High;
@@ -74,14 +75,23 @@ public static class Settings
         file?.StoreString(JsonSerializer.Serialize(Current));
     }
 
-    /// <summary>Громкость музыки. Её шину создаёт SoundManager, поэтому при первом запуске её может ещё не быть.</summary>
-    public static void ApplyMusicVolume()
+    /// <summary>
+    /// Громкость звуков и музыки: у каждых своя шина, а общая громкость (шина Master) действует на обе.
+    /// Шины создаёт SoundManager, поэтому при первом запуске их может ещё не быть.
+    /// </summary>
+    public static void ApplyBusVolumes()
     {
-        int bus = AudioServer.GetBusIndex(SoundManager.MusicBus);
+        SetBus(SoundManager.SoundsBus, Current.Sounds);
+        SetBus(SoundManager.MusicBus, Current.Music);
+    }
+
+    private static void SetBus(string name, int percent)
+    {
+        int bus = AudioServer.GetBusIndex(name);
         if (bus < 0)
             return;
-        AudioServer.SetBusMute(bus, Current.Music == 0);
-        AudioServer.SetBusVolumeDb(bus, Mathf.LinearToDb(Current.Music / 100f));
+        AudioServer.SetBusMute(bus, percent == 0);
+        AudioServer.SetBusVolumeDb(bus, Mathf.LinearToDb(percent / 100f));
     }
 
     /// <summary>Применяет настройки к движку: громкость главной шины звука и режим окна.</summary>
@@ -90,7 +100,7 @@ public static class Settings
         // Громкость в Godot задаётся в децибелах, а нам удобнее проценты — переводим
         AudioServer.SetBusMute(0, Current.Volume == 0);
         AudioServer.SetBusVolumeDb(0, Mathf.LinearToDb(Current.Volume / 100f));
-        ApplyMusicVolume();
+        ApplyBusVolumes();
 
         var mode = Current.Fullscreen ? DisplayServer.WindowMode.Fullscreen : DisplayServer.WindowMode.Windowed;
         if (DisplayServer.WindowGetMode() != mode)

@@ -52,6 +52,7 @@ public partial class SoundManager : Node
     private const float PeakLevel = 0.9f; // до какого уровня нормализуем каждый звук
     private const string WorldBus = "World";
     public const string MusicBus = "Music";
+    public const string SoundsBus = "Sounds";
     private const float MusicVolumeDb = -11f;  // музыка — фон: тише звуков, ползунок лишь уменьшает её от этого уровня
     private const float AmbienceSeconds = 12f;
     private const float AmbienceVolumeDb = -24f;
@@ -160,6 +161,14 @@ public partial class SoundManager : Node
     /// <summary>Реверберация — отражения от стен. Отдельная шина, чтобы интерфейс звучал сухо.</summary>
     private static void CreateWorldBus()
     {
+        // Все звуки сходятся в шину Sounds: у неё свой ползунок, а эхо мира идёт через неё
+        if (AudioServer.GetBusIndex(SoundsBus) < 0)
+        {
+            AudioServer.AddBus();
+            int sounds = AudioServer.BusCount - 1;
+            AudioServer.SetBusName(sounds, SoundsBus);
+            AudioServer.SetBusSend(sounds, "Master");
+        }
         if (AudioServer.GetBusIndex(MusicBus) < 0)
         {
             // У музыки своя шина: её громкость настраивается отдельно от звуков
@@ -168,14 +177,14 @@ public partial class SoundManager : Node
             AudioServer.SetBusName(music, MusicBus);
             AudioServer.SetBusSend(music, "Master");
             AudioServer.AddBusEffect(music, new AudioEffectReverb { RoomSize = 0.8f, Damping = 0.6f, Wet = 0.3f, Dry = 1f, Spread = 0.9f });
-            Settings.ApplyMusicVolume();
         }
+        Settings.ApplyBusVolumes();
         if (AudioServer.GetBusIndex(WorldBus) >= 0)
             return;
         AudioServer.AddBus();
         int bus = AudioServer.BusCount - 1;
         AudioServer.SetBusName(bus, WorldBus);
-        AudioServer.SetBusSend(bus, "Master");
+        AudioServer.SetBusSend(bus, SoundsBus);
         AudioServer.AddBusEffect(bus, new AudioEffectReverb
         {
             RoomSize = 0.62f,
@@ -373,7 +382,7 @@ public partial class SoundManager : Node
         // Берём свободный плеер, а если все заняты — по кругу перебиваем самый старый
         var player = _players.Find(p => !p.Playing) ?? _players[_nextPlayer++ % PoolSize];
         player.Stream = def.Variants[_noise.Next(def.Variants.Count)];
-        player.Bus = def.World ? WorldBus : "Master";
+        player.Bus = def.World ? WorldBus : SoundsBus;
         player.VolumeDb = def.VolumeDb;
         player.PitchScale = 1f + (float)GD.RandRange(-def.PitchSpread, def.PitchSpread); // чтобы повторы не надоедали
         player.Play();
@@ -493,6 +502,8 @@ public partial class SoundManager : Node
     /// </summary>
     public IEnumerable<string> Report()
     {
+        foreach (string name in new[] { WorldBus, SoundsBus, MusicBus })
+            yield return $"ШИНА: {name} идёт в {AudioServer.GetBusSend(AudioServer.GetBusIndex(name))}, громкость {AudioServer.GetBusVolumeDb(AudioServer.GetBusIndex(name)):0.0} дБ";
         foreach (var (sound, def) in _sounds)
         {
             foreach (var stream in def.Variants.Take(1))

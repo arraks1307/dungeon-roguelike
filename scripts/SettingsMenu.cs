@@ -13,6 +13,8 @@ public partial class SettingsMenu : CanvasLayer
 
     private HSlider _volume;
     private Label _volumeValue;
+    private HSlider _sounds;
+    private Label _soundsValue;
     private HSlider _music;
     private Label _musicValue;
     private CheckButton _fullscreen;
@@ -32,7 +34,8 @@ public partial class SettingsMenu : CanvasLayer
         title.AddThemeColorOverride("font_color", Ui.TitleColor);
         column.AddChild(title);
 
-        (_volume, _volumeValue) = CreateSlider(column, "Громкость", value => Settings.Current.Volume = value);
+        (_volume, _volumeValue) = CreateSlider(column, "Общая громкость", value => Settings.Current.Volume = value);
+        (_sounds, _soundsValue) = CreateSlider(column, "Звуки", value => Settings.Current.Sounds = value);
         (_music, _musicValue) = CreateSlider(column, "Музыка", value => Settings.Current.Music = value);
 
         var animationRow = CreateRow(column, "Анимации");
@@ -74,6 +77,8 @@ public partial class SettingsMenu : CanvasLayer
         var current = Settings.Current;
         _volume.SetValueNoSignal(current.Volume);
         _volumeValue.Text = $"{current.Volume}%";
+        _sounds.SetValueNoSignal(current.Sounds);
+        _soundsValue.Text = $"{current.Sounds}%";
         _music.SetValueNoSignal(current.Music);
         _musicValue.Text = $"{current.Music}%";
         _animation.Selected = (int)current.Animation;
@@ -121,7 +126,7 @@ public partial class SettingsMenu : CanvasLayer
         row.AddThemeConstantOverride("separation", 16);
         parent.AddChild(row);
         var label = Ui.CreateLabel(20, caption);
-        label.CustomMinimumSize = new Vector2(150f, 0f);
+        label.CustomMinimumSize = new Vector2(190f, 0f);
         row.AddChild(label);
         return row;
     }
