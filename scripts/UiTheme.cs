@@ -85,22 +85,25 @@ public static class UiTheme
     /// Виньетка — затемнение по краям экрана. Нарисована маленьким шейдером (программой для видеокарты):
     /// для каждой точки считаем расстояние до центра и чем дальше, тем темнее.
     /// </summary>
-    public static ColorRect CreateVignette(float strength)
+    public static ColorRect CreateVignette(float strength, Color? color = null)
     {
         var shader = new Shader
         {
             Code = """
                 shader_type canvas_item;
                 uniform float strength = 0.5;
+                uniform vec3 tint = vec3(0.0);
                 void fragment() {
                     vec2 offset = (UV - 0.5) * vec2(1.6, 1.0);
                     float darkness = smoothstep(0.35, 1.0, length(offset));
-                    COLOR = vec4(0.0, 0.0, 0.0, darkness * strength);
+                    COLOR = vec4(tint, darkness * strength);
                 }
                 """,
         };
         var material = new ShaderMaterial { Shader = shader };
         material.SetShaderParameter("strength", strength);
+        var tint = color ?? Colors.Black;
+        material.SetShaderParameter("tint", new Vector3(tint.R, tint.G, tint.B));
 
         var vignette = new ColorRect { Material = material, MouseFilter = Control.MouseFilterEnum.Ignore };
         vignette.SetAnchorsPreset(Control.LayoutPreset.FullRect);

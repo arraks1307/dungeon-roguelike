@@ -38,6 +38,7 @@ public enum Rarity
     Rare,
     Epic,
     Legendary,
+    Set,      // часть набора. Значение добавлено последним: старые сохранения хранят редкость числом
 }
 
 /// <summary>Особое правило легендарной вещи.</summary>
@@ -48,6 +49,11 @@ public enum LegendaryEffect
     Greed,   // золото превращается в урон
     Phoenix, // раз за этаж спасает от смерти
     Shadow,  // после победы герой исчезает на два хода
+    Salamander, // лава лечит, шипы не ранят
+    Echo,       // способности заряжаются вдвое быстрее
+    Pierce,     // удар бьёт и врага позади цели
+    Reaper,     // ослабевший враг падает от удара
+    GolemHeart, // огромный запас здоровья, но зелья не лечат
 }
 
 /// <summary>
@@ -98,7 +104,8 @@ public readonly record struct Stats(
 /// </summary>
 public record ItemTemplate(
     string Name, ItemKind Kind, Stats Stats, int Power, Color Color, int MinFloor, int Weight, int Price,
-    LegendaryEffect Effect = LegendaryEffect.None, string Special = null)
+    LegendaryEffect Effect = LegendaryEffect.None, string Special = null,
+    ItemSet Set = null, IconShape Icon = IconShape.Auto, Color? Accent = null, string Unlock = null)
 {
     public EquipSlot Slot => Kind switch
     {
@@ -110,6 +117,12 @@ public record ItemTemplate(
         _ => EquipSlot.None,
     };
 }
+
+/// <summary>
+/// Набор вещей: чем больше его частей надето одновременно, тем больше бонус.
+/// Tiers — ступени: «от Count частей даётся Bonus»; все достигнутые ступени складываются.
+/// </summary>
+public record ItemSet(string Name, Color Color, int Size, params (int Count, Stats Bonus)[] Tiers);
 
 /// <summary>Случайное свойство предмета. Название — существительное в родительном падеже: «Меч вампира».</summary>
 public record Affix(string Name, Stats Stats);
@@ -155,6 +168,7 @@ public class Item
         Rarity.Rare => new Color(0.45f, 0.7f, 1f),
         Rarity.Epic => new Color(0.8f, 0.5f, 1f),
         Rarity.Legendary => new Color(1f, 0.6f, 0.15f),
+        Rarity.Set => new Color(0.4f, 0.95f, 0.5f),
         _ => new Color(0.92f, 0.92f, 0.92f),
     };
 
@@ -164,6 +178,7 @@ public class Item
         Rarity.Rare => "редкая",
         Rarity.Epic => "эпическая",
         Rarity.Legendary => "легендарная",
+        Rarity.Set => "часть набора",
         _ => "обычная",
     };
 
@@ -236,28 +251,28 @@ public static class ItemCatalog
     private static readonly Color Iron = new(0.6f, 0.62f, 0.65f);
     private static readonly Color Gold = new(1f, 0.8f, 0.3f);
 
-    public static readonly ItemTemplate Dagger = new("Кинжал", ItemKind.Weapon, new Stats(Attack: 2), 0, Steel, 1, 2, 10);
+    public static readonly ItemTemplate Dagger = new("Кинжал", ItemKind.Weapon, new Stats(Attack: 2), 0, Steel, 1, 2, 10, Icon: IconShape.Dagger);
     public static readonly ItemTemplate Sword = new("Меч", ItemKind.Weapon, new Stats(Attack: 4), 0, Steel, 2, 6, 30);
-    public static readonly ItemTemplate Axe = new("Топор", ItemKind.Weapon, new Stats(Attack: 6), 0, Steel, 4, 5, 55);
-    public static readonly ItemTemplate Rapier = new("Рапира", ItemKind.Weapon, new Stats(Attack: 3, Crit: 15), 0, Steel, 3, 4, 45);
+    public static readonly ItemTemplate Axe = new("Топор", ItemKind.Weapon, new Stats(Attack: 6), 0, Steel, 4, 5, 55, Icon: IconShape.Axe);
+    public static readonly ItemTemplate Rapier = new("Рапира", ItemKind.Weapon, new Stats(Attack: 3, Crit: 15), 0, Steel, 3, 4, 45, Icon: IconShape.Rapier);
 
-    public static readonly ItemTemplate LeatherArmor = new("Кожаная броня", ItemKind.Armor, new Stats(Defense: 1), 0, Leather, 1, 7, 15);
-    public static readonly ItemTemplate ChainMail = new("Кольчуга", ItemKind.Armor, new Stats(Defense: 2), 0, Iron, 2, 5, 35);
+    public static readonly ItemTemplate LeatherArmor = new("Кожаная броня", ItemKind.Armor, new Stats(Defense: 1), 0, Leather, 1, 7, 15, Icon: IconShape.Vest);
+    public static readonly ItemTemplate ChainMail = new("Кольчуга", ItemKind.Armor, new Stats(Defense: 2), 0, Iron, 2, 5, 35, Icon: IconShape.Chain);
     public static readonly ItemTemplate PlateArmor = new("Латы", ItemKind.Armor, new Stats(Defense: 4), 0, new Color(0.85f, 0.85f, 0.9f), 4, 3, 70);
 
-    public static readonly ItemTemplate LeatherCap = new("Кожаный шлем", ItemKind.Helmet, new Stats(Defense: 1), 0, Leather, 1, 5, 12);
+    public static readonly ItemTemplate LeatherCap = new("Кожаный шлем", ItemKind.Helmet, new Stats(Defense: 1), 0, Leather, 1, 5, 12, Icon: IconShape.Cap);
     public static readonly ItemTemplate IronHelmet = new("Железный шлем", ItemKind.Helmet, new Stats(Defense: 2), 0, Iron, 3, 4, 35);
 
-    public static readonly ItemTemplate PowerRing = new("Кольцо силы", ItemKind.Ring, new Stats(Attack: 2), 0, Gold, 2, 3, 40);
-    public static readonly ItemTemplate AccuracyRing = new("Кольцо меткости", ItemKind.Ring, new Stats(Crit: 15), 0, Gold, 2, 3, 40);
-    public static readonly ItemTemplate RegenRing = new("Кольцо восстановления", ItemKind.Ring, new Stats(Regen: 2), 0, Gold, 3, 3, 45);
+    public static readonly ItemTemplate PowerRing = new("Кольцо силы", ItemKind.Ring, new Stats(Attack: 2), 0, Gold, 2, 3, 40, Accent: new Color(1f, 0.25f, 0.2f));
+    public static readonly ItemTemplate AccuracyRing = new("Кольцо меткости", ItemKind.Ring, new Stats(Crit: 15), 0, Gold, 2, 3, 40, Accent: new Color(0.3f, 0.65f, 1f));
+    public static readonly ItemTemplate RegenRing = new("Кольцо восстановления", ItemKind.Ring, new Stats(Regen: 2), 0, Gold, 3, 3, 45, Accent: new Color(0.3f, 0.95f, 0.5f));
 
     public static readonly ItemTemplate LifeAmulet = new("Амулет жизни", ItemKind.Amulet, new Stats(MaxHp: 10), 0, new Color(1f, 0.4f, 0.4f), 2, 3, 40);
     public static readonly ItemTemplate SightAmulet = new("Амулет зоркости", ItemKind.Amulet, new Stats(Vision: 3), 0, new Color(0.4f, 0.8f, 1f), 1, 3, 30);
     public static readonly ItemTemplate VampireAmulet = new("Амулет крови", ItemKind.Amulet, new Stats(Lifesteal: 2), 0, new Color(0.7f, 0.1f, 0.2f), 3, 3, 50);
 
     public static readonly ItemTemplate HealthPotion = new("Зелье лечения", ItemKind.HealthPotion, default, 12, new Color(1f, 0.3f, 0.5f), 1, 30, 12);
-    public static readonly ItemTemplate GreatHealthPotion = new("Большое зелье", ItemKind.HealthPotion, default, 25, new Color(1f, 0.15f, 0.3f), 3, 12, 25);
+    public static readonly ItemTemplate GreatHealthPotion = new("Большое зелье", ItemKind.HealthPotion, default, 25, new Color(1f, 0.15f, 0.3f), 3, 12, 25, Icon: IconShape.BigFlask);
     public static readonly ItemTemplate StrengthPotion = new("Зелье силы", ItemKind.StrengthPotion, default, 3, new Color(1f, 0.55f, 0.1f), 2, 8, 20);
     public static readonly ItemTemplate InvisibilityPotion = new("Зелье невидимости", ItemKind.InvisibilityPotion, default, 12, new Color(0.7f, 0.9f, 0.95f), 2, 6, 25);
     public static readonly ItemTemplate TeleportScroll = new("Свиток телепорта", ItemKind.TeleportScroll, default, 0, new Color(0.4f, 0.6f, 1f), 1, 9, 15);
@@ -272,10 +287,80 @@ public static class ItemCatalog
         new("Клинок бури", ItemKind.Weapon, new Stats(Attack: 6), 0, new Color(0.5f, 0.75f, 1f), 1, 0, 300, LegendaryEffect.Storm, "Каждая третья атака задевает всех врагов вокруг."),
         new("Кольцо алчности", ItemKind.Ring, new Stats(Crit: 5), 0, new Color(1f, 0.8f, 0.2f), 1, 0, 300, LegendaryEffect.Greed, "+1 к удару за каждые 100 золота (до +8)."),
         new("Амулет феникса", ItemKind.Amulet, new Stats(MaxHp: 10), 0, new Color(1f, 0.45f, 0.1f), 1, 0, 300, LegendaryEffect.Phoenix, "Раз за этаж спасает от смерти."),
-        new("Плащ теней", ItemKind.Armor, new Stats(Defense: 3), 0, new Color(0.3f, 0.25f, 0.4f), 1, 0, 300, LegendaryEffect.Shadow, "После победы над врагом ты исчезаешь на два хода."),
+        new("Плащ теней", ItemKind.Armor, new Stats(Defense: 3), 0, new Color(0.3f, 0.25f, 0.4f), 1, 0, 300, LegendaryEffect.Shadow, "После победы над врагом ты исчезаешь на два хода.", Icon: IconShape.Cloak),
+        new("Чешуя саламандры", ItemKind.Armor, new Stats(Defense: 3), 0, new Color(0.9f, 0.35f, 0.15f), 1, 0, 300, LegendaryEffect.Salamander, "Лава лечит тебя, а шипы не ранят.", Icon: IconShape.Plate, Unlock: "lavawalker"),
+        new("Кольцо эха", ItemKind.Ring, new Stats(Crit: 5), 0, new Color(0.75f, 0.8f, 1f), 1, 0, 300, LegendaryEffect.Echo, "Способности заряжаются вдвое быстрее.", Accent: new Color(0.6f, 0.4f, 1f), Unlock: "collector"),
+        new("Копьё пронзания", ItemKind.Weapon, new Stats(Attack: 7), 0, new Color(0.7f, 0.9f, 1f), 1, 0, 300, LegendaryEffect.Pierce, "Удар проходит насквозь и бьёт врага позади цели.", Icon: IconShape.Rapier, Unlock: "bareboss"),
+        new("Коса жнеца", ItemKind.Weapon, new Stats(Attack: 6), 0, new Color(0.55f, 0.9f, 0.6f), 1, 0, 300, LegendaryEffect.Reaper, "Враг с остатком здоровья меньше 20% падает от удара (кроме боссов).", Icon: IconShape.Scythe, Unlock: "pact5"),
+        new("Сердце голема", ItemKind.Amulet, new Stats(MaxHp: 40), 0, new Color(0.55f, 0.55f, 0.6f), 1, 0, 300, LegendaryEffect.GolemHeart, "Зелья лечения больше не действуют.", Unlock: "noarmor"),
     };
 
-    public static Item RollLegendary(Random rng) => new(Legendaries[rng.Next(Legendaries.Length)], Rarity.Legendary);
+    /// <summary>allowed — какие вещи уже открыты; null — все (в отряде пул не зависит от чьего-то прогресса).</summary>
+    public static Item RollLegendary(Random rng, Func<ItemTemplate, bool> allowed = null)
+    {
+        var pool = allowed == null ? Legendaries : Legendaries.Where(allowed).ToArray();
+        return new Item(pool[rng.Next(pool.Length)], Rarity.Legendary);
+    }
+
+    // ---------- Наборы ----------
+
+    private static readonly Color GuardColor = new(0.45f, 0.65f, 0.95f);
+    private static readonly Color HunterColor = new(0.35f, 0.75f, 0.45f);
+    private static readonly Color OathColor = new(0.8f, 0.15f, 0.25f);
+    private static readonly Color AshColor = new(0.95f, 0.5f, 0.2f);
+    private static readonly Color PilgrimColor = new(0.9f, 0.85f, 0.55f);
+
+    public static readonly ItemSet GuardSet = new("Набор стража", GuardColor, 3,
+        (2, new Stats(Defense: 1, MaxHp: 10)),
+        (3, new Stats(Defense: 2, Thorns: 4)));
+
+    public static readonly ItemSet HunterSet = new("Набор охотника", HunterColor, 3,
+        (2, new Stats(Crit: 10)),
+        (3, new Stats(Attack: 3, Vision: 2)));
+
+    public static readonly ItemSet OathSet = new("Кровавый обет", OathColor, 3,
+        (2, new Stats(Lifesteal: 2)),
+        (3, new Stats(Attack: 3, Lifesteal: 2)));
+
+    public static readonly ItemSet AshSet = new("Пепельный набор", AshColor, 4,
+        (2, new Stats(FireDamage: 2)),
+        (3, new Stats(Attack: 2, Defense: 1)),
+        (4, new Stats(Crit: 10, FireDamage: 5)));
+
+    public static readonly ItemSet PilgrimSet = new("Набор паломника", PilgrimColor, 3,
+        (2, new Stats(Regen: 2)),
+        (3, new Stats(Defense: 2, MaxHp: 20)));
+
+    public static readonly ItemTemplate[] SetPieces =
+    {
+        new("Латы стража", ItemKind.Armor, new Stats(Defense: 3, MaxHp: 5), 0, GuardColor, 3, 0, 130, Set: GuardSet),
+        new("Шлем стража", ItemKind.Helmet, new Stats(Defense: 2, MaxHp: 3), 0, GuardColor, 2, 0, 100, Set: GuardSet),
+        new("Амулет стража", ItemKind.Amulet, new Stats(MaxHp: 10), 0, GuardColor, 2, 0, 100, Set: GuardSet),
+
+        new("Клинок охотника", ItemKind.Weapon, new Stats(Attack: 5, Crit: 5), 0, HunterColor, 3, 0, 130, Set: HunterSet),
+        new("Капюшон охотника", ItemKind.Helmet, new Stats(Defense: 1, Vision: 1), 0, HunterColor, 2, 0, 90, Set: HunterSet, Icon: IconShape.Hood),
+        new("Кольцо охотника", ItemKind.Ring, new Stats(Crit: 10), 0, Colors.Silver, 2, 0, 100, Set: HunterSet, Accent: HunterColor),
+
+        new("Серп обета", ItemKind.Weapon, new Stats(Attack: 6, MaxHp: -5), 0, OathColor, 4, 0, 140, Set: OathSet, Icon: IconShape.Scythe),
+        new("Кольцо обета", ItemKind.Ring, new Stats(Attack: 1, Lifesteal: 1), 0, Colors.Silver, 3, 0, 110, Set: OathSet, Accent: OathColor),
+        new("Амулет обета", ItemKind.Amulet, new Stats(Lifesteal: 2), 0, OathColor, 3, 0, 110, Set: OathSet),
+
+        new("Пепельный топор", ItemKind.Weapon, new Stats(Attack: 6, FireDamage: 1), 0, AshColor, 5, 0, 150, Set: AshSet, Icon: IconShape.Axe),
+        new("Пепельная броня", ItemKind.Armor, new Stats(Defense: 2, FireDamage: 1), 0, AshColor, 5, 0, 130, Set: AshSet),
+        new("Пепельный шлем", ItemKind.Helmet, new Stats(Defense: 1, FireDamage: 1), 0, AshColor, 5, 0, 110, Set: AshSet),
+        new("Пепельное кольцо", ItemKind.Ring, new Stats(FireDamage: 2), 0, Colors.Silver, 5, 0, 110, Set: AshSet, Accent: AshColor),
+
+        new("Ряса паломника", ItemKind.Armor, new Stats(Defense: 1, MaxHp: 10, Regen: 1), 0, PilgrimColor, 2, 0, 120, Set: PilgrimSet, Icon: IconShape.Robe),
+        new("Кольцо паломника", ItemKind.Ring, new Stats(Regen: 2), 0, Colors.Silver, 2, 0, 100, Set: PilgrimSet, Accent: PilgrimColor),
+        new("Амулет паломника", ItemKind.Amulet, new Stats(MaxHp: 8, Vision: 1), 0, PilgrimColor, 2, 0, 100, Set: PilgrimSet),
+    };
+
+    /// <summary>Случайная часть набора, доступная на этом этаже.</summary>
+    public static Item RollSetPiece(Random rng, int floor)
+    {
+        var pool = SetPieces.Where(piece => piece.MinFloor <= floor).ToArray();
+        return new Item(pool[rng.Next(pool.Length)], Rarity.Set);
+    }
 
     public static readonly ItemTemplate[] All =
     {
@@ -308,6 +393,10 @@ public static class ItemCatalog
     /// </summary>
     public static Item Roll(Random rng, int floor)
     {
+        // Часть набора: чем глубже, тем чаще. На первом этаже наборов ещё нет
+        if (floor >= 2 && rng.NextDouble() < Math.Min(0.04 + floor * 0.006, 0.1))
+            return RollSetPiece(rng, floor);
+
         var pool = All.Where(template => template.MinFloor <= floor).ToArray();
         int roll = rng.Next(pool.Sum(template => template.Weight));
         var chosen = pool[^1];
@@ -361,7 +450,8 @@ public static class ItemInfo
                 text.Append(line).Append('\n');
             if (item.Template.Special != null)
                 text.Append(Colored(item.Template.Special, item.RarityColor)).Append('\n');
-
+            if (item.Template.Set != null)
+                AppendSet(text, item, inventory);
             // Сравнение с тем, что сейчас надето в этот же слот
             var equipped = inventory.GetEquipped(item.Slot);
             if (equipped == null)
@@ -386,6 +476,21 @@ public static class ItemInfo
         if (actionHint != null)
             text.Append('\n').Append(Colored(actionHint, UiTheme.Accent));
         return text.ToString();
+    }
+
+    /// <summary>Сколько частей надето, какие ступени уже работают и что откроется, если надеть эту вещь.</summary>
+    private static void AppendSet(System.Text.StringBuilder text, Item item, Inventory inventory)
+    {
+        var set = item.Template.Set;
+        int worn = inventory.SetCount(set);
+        bool adds = inventory.GetEquipped(item.Slot)?.Template.Set != set;
+        text.Append('\n').Append(Colored($"{set.Name}: надето {worn} из {set.Size}", set.Color)).Append('\n');
+        foreach (var (count, bonus) in set.Tiers)
+        {
+            var color = worn >= count ? UiTheme.Positive : adds && worn + 1 == count ? UiTheme.Accent : UiTheme.TextMuted;
+            string mark = worn >= count ? "✓" : adds && worn + 1 == count ? "→" : " ";
+            text.Append(Colored($"{mark} {count} части: {string.Join(", ", bonus.Describe())}", color)).Append('\n');
+        }
     }
 
     /// <summary>Что сделает Enter с этим предметом — подсказка внизу описания.</summary>

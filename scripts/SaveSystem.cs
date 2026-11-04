@@ -56,6 +56,9 @@ public class ShrineSave
     public int X, Y;
     public ShrineKind Kind;
     public bool Explained;
+    public int[] Deals = Array.Empty<int>();
+    public List<ItemSave> Offer = new();
+    public int Extra;
 }
 
 public class ChestSave
@@ -91,7 +94,7 @@ public class ItemSave
     /// <summary>Восстановить предмет по названиям. null — если такого шаблона больше нет в игре.</summary>
     public Item ToItem()
     {
-        var template = ItemCatalog.All.Concat(ItemCatalog.Legendaries).FirstOrDefault(t => t.Name == Template);
+        var template = ItemCatalog.All.Concat(ItemCatalog.Legendaries).Concat(ItemCatalog.SetPieces).FirstOrDefault(t => t.Name == Template);
         if (template == null)
             return null;
         var affixes = Affixes
@@ -113,6 +116,8 @@ public class PlayerSave
     public int StrengthTurns, StrengthBonus, InvisibleTurns, TurnCounter;
     public List<ItemSave> Items = new();
     public List<ItemSave> Equipped = new();
+    public List<string> Pacts = new();
+    public int DamageDealt, KillsMade, BiggestHit, GoldSpent, PotionsDrunk, LavaSteps;
 }
 
 public class MapSave

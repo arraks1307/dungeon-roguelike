@@ -9,7 +9,7 @@ namespace Roguelike;
 /// </summary>
 public partial class MainMenu : CanvasLayer
 {
-    public const string Version = "v1.8";
+    public const string Version = "v2.0";
 
     private static readonly Color VictoryColor = new(1f, 0.82f, 0.4f);
 
@@ -61,9 +61,8 @@ public partial class MainMenu : CanvasLayer
         _mainPage.AddChild(new Control { CustomMinimumSize = new Vector2(0f, 28f) });
 
         _continueButton = CreateMenuButton("Продолжить", () => ContinueRequested?.Invoke());
-        _newGameButton = CreateMenuButton("Новая игра", () => NewGameRequested?.Invoke());
+        _newGameButton = CreateMenuButton("Одиночная игра", () => NewGameRequested?.Invoke());
         CreateMenuButton("Сетевая игра", () => NetworkRequested?.Invoke());
-        CreateMenuButton("Наследие", () => LegacyRequested?.Invoke());
         CreateMenuButton("Рекорды", ShowScores);
         CreateMenuButton("Настройки", () => SettingsRequested?.Invoke());
         CreateMenuButton("Выход", () => GetTree().Quit());
@@ -133,7 +132,7 @@ public partial class MainMenu : CanvasLayer
         _scoresPage.Visible = false;
         _mainPage.Visible = true;
         // «Продолжить» есть, только если есть сохранённый забег
-        _continueButton.Visible = SaveSystem.HasSave;
+        _continueButton.Visible = false; // спуски продолжаются из лагеря своего мира
         Ui.FocusLater(_continueButton.Visible ? _continueButton : _newGameButton);
         StartTitleBreathing();
     }

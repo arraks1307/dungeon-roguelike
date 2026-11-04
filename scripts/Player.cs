@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using Godot;
+using static Roguelike.Shapes;
 
 namespace Roguelike;
 
@@ -12,7 +13,7 @@ namespace Roguelike;
 /// </summary>
 public partial class Player : Actor
 {
-    private const int RegenInterval = 5; // регенерация срабатывает раз в столько ходов
+    private const int RegenInterval = 8; // регенерация срабатывает раз в столько ходов
     private const float InvisibleAlpha = 0.3f;
 
     // Умная ходьба: сколько держать клавишу до начала автоходьбы и пауза между её шагами (секунды)
@@ -72,6 +73,32 @@ public partial class Player : Actor
     public int DamageDealt { get; set; }
     public int KillsMade { get; set; }
     public int RevivesMade { get; set; }
+    public int BiggestHit { get; set; }
+    public int GoldSpent { get; set; }
+    public int PotionsDrunk { get; set; }
+    public int LavaSteps { get; set; }
+
+    private readonly List<Pact> _pacts = new();
+
+    /// <summary>Сделки с подземельем: действуют до конца забега.</summary>
+    public IReadOnlyList<Pact> Pacts => _pacts;
+
+    public bool HasPact(PactRule rule) => _pacts.Any(pact => pact.Rule == rule);
+
+    /// <summary>Постоянные бонусы героя мира: очки и черта, выбранные при создании.</summary>
+    public void SetBuild(Stats build)
+    {
+        _build = build;
+        RecalculateStats();
+    }
+
+    private Stats _build;
+
+    public void AddPact(Pact pact)
+    {
+        _pacts.Add(pact);
+        RecalculateStats();
+    }
 
     /// <summary>Сколько улучшений этот герой ещё должен выбрать (за раунд можно получить несколько уровней).</summary>
     public int PendingLevelUps { get; set; }
@@ -166,8 +193,7 @@ public partial class Player : Actor
     public override void _Ready()
     {
         DisplayName = "Ты";
-        CreateBody(new CapsuleMesh { Radius = 0.25f, Height = 0.9f }, Class.Color, 0.45f);
-        BodyMaterial.Transparency = BaseMaterial3D.TransparencyEnum.Alpha; // для невидимости
+        CreateBody(new CapsuleMesh { Radius = 0.19f, Height = 0.56f }, Class.Color, 0.52f);
 
         // «Факел» — тёплый точечный свет, который двигается вместе с игроком
         // Свет повыше над головой — иначе голова пересвечена. Сам герой тень от него не отбрасывает
@@ -176,8 +202,8 @@ public partial class Player : Actor
         {
             Position = new Vector3(0f, 2.4f, 0f),
             LightColor = new Color(1f, 0.75f, 0.45f),
-            LightEnergy = 2.1f,
-            OmniRange = 9f,
+            LightEnergy = 2.8f,
+            OmniRange = 11f,
             ShadowEnabled = true,
         };
         Body.CastShadow = GeometryInstance3D.ShadowCastingSetting.Off;
@@ -193,8 +219,11 @@ public partial class Player : Actor
     private OmniLight3D _torchLight;
     private CpuParticles3D _dust;
     private Node3D _gear;
+    private float _shownFade = -1f;
 
     /// <summary>На низком качестве — без теней от факела и без пылинок.</summary>
+    public void SetTorch(bool enabled) => _torchLight.Visible = enabled;
+
     public void SetHighQuality(bool high)
     {
         // Тени от точечного света дорогие (их рендер — шесть направлений сразу), поэтому
@@ -239,59 +268,192 @@ public partial class Player : Actor
     };
 
     /// <summary>
-    /// Голова и снаряжение по классу: воин — шлем, меч и щит; следопыт — капюшон и лук;
-    /// маг — остроконечная шляпа и посох со светящейся сферой. Детали крепятся к телу,
-    /// поэтому двигаются вместе с ним при атаке и «дыхании».
+    /// Герой собран как фигурка на шарнирах: руки и ноги качаются при ходьбе (см. Actor), а рука с оружием
+    /// делает замах при ударе. Детали цвета класса идут через Flesh: у них общий материал с туловищем.
+    /// Лицо смотрит в сторону +Z. Ноги стоят на полу: тело на высоте 0.52, бёдра на 0.32.
     /// </summary>
     private void BuildGear()
     {
         _gear?.QueueFree();
+        ClearLimbs();
         _gear = new Node3D();
         Body.AddChild(_gear);
+        _shownFade = -1f;
 
         var skin = new Color(0.95f, 0.8f, 0.68f);
         var dark = Class.Color.Darkened(0.45f);
+        var light = Class.Color.Lightened(0.35f);
         var steel = new Color(0.78f, 0.8f, 0.86f);
         var wood = new Color(0.45f, 0.28f, 0.14f);
-        _gear.AddChild(Part(new SphereMesh { Radius = 0.15f, Height = 0.3f }, skin, new Vector3(0f, 0.55f, 0.02f)));
+        var leather = new Color(0.34f, 0.22f, 0.13f);
+        var gold = new Color(1f, 0.8f, 0.3f);
+        var eye = new Color(0.1f, 0.08f, 0.08f);
+
+        void Add(Node3D parent, PrimitiveMesh mesh, Color color, float x, float y, float z, Vector3? turn = null, float glow = 0f, float metal = 0f) =>
+            parent.AddChild(Piece(mesh, color, new Vector3(x, y, z), turn, glow, metal));
+
+        void Head()
+        {
+            Add(_gear, Ball(0.15f), skin, 0f, 0.4f, 0.03f);
+            foreach (float side in new[] { -1f, 1f })
+                Add(_gear, Ball(0.022f), eye, side * 0.06f, 0.42f, 0.165f);
+        }
+
+        void Belt(float radius) => Add(_gear, Rod(radius, 0.05f), leather, 0f, -0.14f, 0f);
 
         switch (Class.Class)
         {
             case PlayerClass.Warrior:
-                _gear.AddChild(Part(new SphereMesh { Radius = 0.165f, Height = 0.2f }, steel, new Vector3(0f, 0.63f, 0f)));
-                _gear.AddChild(Part(new BoxMesh { Size = new Vector3(0.05f, 0.62f, 0.03f) }, steel, new Vector3(0.31f, 0.08f, 0.12f), rotationDegrees: new Vector3(0f, 0f, -18f)));
-                _gear.AddChild(Part(new BoxMesh { Size = new Vector3(0.2f, 0.04f, 0.05f) }, wood, new Vector3(0.27f, -0.15f, 0.12f)));
-                _gear.AddChild(Part(new CylinderMesh { TopRadius = 0.2f, BottomRadius = 0.2f, Height = 0.05f }, dark, new Vector3(-0.29f, 0.02f, 0.06f), rotationDegrees: new Vector3(0f, 0f, 90f)));
+            {
+                AddLegs(_gear, -0.2f, 0.095f, 0.3f, 0.075f, dark, leather);
+                var (sword, shield) = AddArms(_gear, 0.17f, 0.25f, 0.3f, 0.06f, null, steel);
+                Head();
+                Add(_gear, Taper(0.2f, 0.225f, 0.32f), steel, 0f, 0.04f, 0f, metal: 0.6f);
+                Add(_gear, Cube(0.2f, 0.46f, 0.03f), Class.Color, 0f, -0.08f, 0.22f);
+                Belt(0.23f);
+                Add(_gear, Ball(0.03f, 0.7f), gold, 0f, -0.14f, 0.235f, metal: 0.7f);
+                Add(_gear, Ball(0.17f, 0.72f), steel, 0f, 0.47f, 0.02f, metal: 0.6f);
+                Add(_gear, Ring(0.165f, 0.018f), gold, 0f, 0.43f, 0.02f, metal: 0.7f);
+                Add(_gear, Cube(0.03f, 0.16f, 0.02f), steel, 0f, 0.42f, 0.19f, metal: 0.6f);
+                Add(_gear, Cube(0.04f, 0.1f, 0.3f), Class.Color, 0f, 0.62f, -0.02f);
+                foreach (float side in new[] { -1f, 1f })
+                    Add(_gear, Ball(0.11f, 0.72f), steel, side * 0.25f, 0.22f, 0f, metal: 0.6f);
+                Cape = AddCape(_gear, new Vector3(0f, 0.25f, -0.18f), 0.42f, 0.66f, dark);
+
+                Add(sword, Cube(0.055f, 0.02f, 0.58f), steel, 0f, -0.3f, 0.36f, metal: 0.7f);
+                Add(sword, Cube(0.2f, 0.035f, 0.035f), gold, 0f, -0.3f, 0.06f, metal: 0.7f);
+                Add(sword, Rod(0.016f, 0.13f), leather, 0f, -0.3f, 0f, new Vector3(90f, 0f, 0f));
+                Add(shield, Rod(0.21f, 0.035f), dark, -0.03f, -0.24f, 0.12f, new Vector3(90f, 0f, 0f), metal: 0.3f);
+                Add(shield, Ring(0.205f, 0.016f), steel, -0.03f, -0.24f, 0.14f, new Vector3(90f, 0f, 0f), metal: 0.6f);
+                Add(shield, Cube(0.05f, 0.3f, 0.02f), light, -0.03f, -0.24f, 0.14f);
+                Add(shield, Cube(0.3f, 0.05f, 0.02f), light, -0.03f, -0.24f, 0.14f);
+                Add(shield, Ball(0.05f, 0.6f), gold, -0.03f, -0.24f, 0.16f, metal: 0.7f);
                 break;
+            }
 
             case PlayerClass.Ranger:
-                _gear.AddChild(Part(new CylinderMesh { TopRadius = 0.04f, BottomRadius = 0.19f, Height = 0.28f }, dark, new Vector3(0f, 0.66f, -0.02f)));
-                _gear.AddChild(Part(new TorusMesh { InnerRadius = 0.3f, OuterRadius = 0.34f }, wood, new Vector3(0.3f, 0.05f, 0.06f), rotationDegrees: new Vector3(0f, 0f, 90f)));
-                _gear.AddChild(Part(new BoxMesh { Size = new Vector3(0.12f, 0.36f, 0.12f) }, wood.Darkened(0.2f), new Vector3(-0.12f, 0.15f, -0.24f), rotationDegrees: new Vector3(15f, 0f, 0f)));
+            {
+                AddLegs(_gear, -0.2f, 0.09f, 0.3f, 0.07f, leather, leather.Darkened(0.3f));
+                var (_, bowArm) = AddArms(_gear, 0.17f, 0.23f, 0.3f, 0.055f, null, skin, weaponRest: -0.3f);
+                Head();
+                Add(_gear, Ball(0.175f), dark, 0f, 0.43f, -0.04f);
+                Add(_gear, Cone(0.09f, 0.22f), dark, 0f, 0.52f, -0.18f, new Vector3(-60f, 0f, 0f));
+                Add(_gear, Ring(0.17f, 0.04f), dark, 0f, 0.28f, 0f);
+                Add(_gear, Taper(0.195f, 0.22f, 0.3f), leather, 0f, 0.0f, 0f);
+                Add(_gear, Cube(0.05f, 0.55f, 0.02f), leather.Darkened(0.3f), 0f, 0.06f, 0.2f, new Vector3(0f, 0f, 35f));
+                Belt(0.225f);
+                Add(_gear, Cube(0.09f, 0.08f, 0.05f), leather.Lightened(0.15f), 0.15f, -0.17f, 0.15f);
+                Add(_gear, Rod(0.06f, 0.42f), leather.Darkened(0.2f), -0.11f, 0.1f, -0.22f, new Vector3(14f, 0f, 0f));
+                foreach (float x in new[] { -0.15f, -0.11f, -0.07f })
+                {
+                    Add(_gear, Rod(0.007f, 0.1f), wood, x, 0.34f, -0.17f);
+                    Add(_gear, Cube(0.03f, 0.07f, 0.008f), light, x, 0.4f, -0.16f);
+                }
+                Cape = AddCape(_gear, new Vector3(0f, 0.25f, -0.17f), 0.34f, 0.5f, dark);
+
+                bowArm.AddChild(Arc(wood, new Vector3(0f, -0.3f, 0.12f), 0.32f, 0.03f, 58f, rotationDegrees: new Vector3(0f, 0f, 28f)));
+                Add(bowArm, Cube(0.56f, 0.007f, 0.007f), new Color(0.9f, 0.88f, 0.8f), 0f, -0.3f, -0.05f, new Vector3(0f, 0f, 28f));
+                Add(bowArm, Rod(0.022f, 0.09f), leather, 0f, -0.3f, 0.12f, new Vector3(0f, 0f, 118f));
                 break;
+            }
 
             case PlayerClass.Rogue:
-                _gear.AddChild(Part(new SphereMesh { Radius = 0.18f, Height = 0.32f }, dark, new Vector3(0f, 0.6f, -0.03f)));
-                _gear.AddChild(Part(new BoxMesh { Size = new Vector3(0.04f, 0.34f, 0.03f) }, steel, new Vector3(0.3f, 0.02f, 0.12f), rotationDegrees: new Vector3(0f, 0f, -25f)));
-                _gear.AddChild(Part(new BoxMesh { Size = new Vector3(0.04f, 0.34f, 0.03f) }, steel, new Vector3(-0.3f, 0.02f, 0.12f), rotationDegrees: new Vector3(0f, 0f, 25f)));
+            {
+                AddLegs(_gear, -0.2f, 0.09f, 0.3f, 0.065f, dark.Darkened(0.3f), Colors.Black.Lightened(0.12f));
+                var (blade, offBlade) = AddArms(_gear, 0.17f, 0.23f, 0.3f, 0.052f, null, dark, weaponRest: -0.6f);
+                Head();
+                Add(_gear, Ball(0.17f), dark, 0f, 0.43f, -0.04f);
+                Add(_gear, Cube(0.25f, 0.08f, 0.1f), dark.Darkened(0.2f), 0f, 0.35f, 0.12f);
+                Add(_gear, Taper(0.19f, 0.21f, 0.3f), dark, 0f, 0f, 0f);
+                Add(_gear, Cube(0.04f, 0.5f, 0.02f), leather, 0f, 0.05f, 0.2f, new Vector3(0f, 0f, -35f));
+                Belt(0.215f);
+                foreach (float x in new[] { -0.15f, 0.15f })
+                    Add(_gear, Cube(0.07f, 0.08f, 0.05f), leather.Lightened(0.15f), x, -0.17f, 0.15f);
+                Cape = AddCape(_gear, new Vector3(0.05f, 0.27f, -0.15f), 0.13f, 0.6f, Class.Color.Lightened(0.15f));
+
+                foreach (var hand in new[] { blade, offBlade })
+                {
+                    Add(hand, Cube(0.04f, 0.015f, 0.34f), steel, 0f, -0.3f, 0.21f, metal: 0.7f);
+                    Add(hand, Cube(0.12f, 0.025f, 0.025f), gold, 0f, -0.3f, 0.04f, metal: 0.7f);
+                }
                 break;
+            }
 
             case PlayerClass.Priest:
-                _gear.AddChild(Part(new TorusMesh { InnerRadius = 0.17f, OuterRadius = 0.2f }, Class.Color.Lightened(0.3f), new Vector3(0f, 0.8f, 0f), glow: 2.5f));
-                _gear.AddChild(Part(new BoxMesh { Size = new Vector3(0.05f, 0.9f, 0.05f) }, wood, new Vector3(0.32f, 0.08f, 0.04f)));
-                _gear.AddChild(Part(new BoxMesh { Size = new Vector3(0.26f, 0.05f, 0.05f) }, Class.Color, new Vector3(0.32f, 0.38f, 0.04f), glow: 1.5f));
+            {
+                var (staff, _) = AddArms(_gear, 0.17f, 0.24f, 0.3f, 0.06f, null, skin, weaponRest: -0.3f);
+                Head();
+                _gear.AddChild(Flesh(Taper(0.2f, 0.33f, 0.6f), new Vector3(0f, -0.22f, 0f)));
+                Add(_gear, Ball(0.158f, 0.62f), new Color(0.72f, 0.52f, 0.3f), 0f, 0.47f, 0f);
+                Add(_gear, Ring(0.16f, 0.04f), light, 0f, 0.27f, 0f);
+                Add(_gear, Cube(0.13f, 0.82f, 0.02f), new Color(0.95f, 0.93f, 0.88f), 0f, -0.12f, 0.25f, new Vector3(-10f, 0f, 0f));
+                Add(_gear, Ring(0.32f, 0.018f), gold, 0f, -0.49f, 0f, metal: 0.6f);
+                Add(_gear, Rod(0.235f, 0.05f), gold, 0f, -0.08f, 0f, metal: 0.6f);
+                Add(_gear, Ring(0.18f, 0.018f), gold, 0f, 0.66f, 0f, glow: 2.5f);
+
+                Add(staff, Rod(0.022f, 1.15f), wood, 0f, -0.2f, 0.02f, new Vector3(16f, 0f, 0f));
+                Add(staff, Cube(0.05f, 0.34f, 0.05f), gold, 0f, 0.44f, 0.2f, new Vector3(16f, 0f, 0f), glow: 0.8f, metal: 0.7f);
+                Add(staff, Cube(0.24f, 0.05f, 0.05f), gold, 0f, 0.47f, 0.21f, glow: 0.8f, metal: 0.7f);
                 break;
+            }
+
+            case PlayerClass.Berserk:
+            {
+                AddLegs(_gear, -0.2f, 0.1f, 0.3f, 0.08f, leather, leather.Darkened(0.3f));
+                var (axe, _) = AddArms(_gear, 0.17f, 0.27f, 0.32f, 0.075f, null, skin);
+                Head();
+                Add(_gear, Taper(0.205f, 0.2f, 0.3f), skin, 0f, 0.04f, 0f);
+                foreach (float side in new[] { -1f, 1f })
+                {
+                    Add(_gear, Cube(0.04f, 0.2f, 0.012f), Class.Color, side * 0.08f, 0.1f, 0.2f, new Vector3(0f, 0f, side * 25f));
+                    Add(_gear, Ball(0.13f, 0.75f), new Color(0.42f, 0.3f, 0.2f), side * 0.25f, 0.23f, 0f);
+                    Add(_gear, Cone(0.05f, 0.24f), new Color(0.9f, 0.86f, 0.75f), side * 0.2f, 0.62f, 0.02f, new Vector3(0f, 0f, side * -35f));
+                }
+                Add(_gear, Ball(0.165f, 0.65f), new Color(0.5f, 0.3f, 0.18f), 0f, 0.47f, 0.01f);
+                Add(_gear, Rod(0.24f, 0.28f), new Color(0.42f, 0.3f, 0.2f), 0f, -0.22f, 0f);
+                Belt(0.245f);
+
+                Add(axe, Rod(0.024f, 0.78f), wood, 0f, -0.32f, 0.26f, new Vector3(90f, 0f, 0f));
+                foreach (float side in new[] { -1f, 1f })
+                    Add(axe, Taper(0.02f, 0.18f, 0.18f), steel, side * 0.13f, -0.32f, 0.54f, new Vector3(0f, 0f, side * -90f), metal: 0.6f);
+                break;
+            }
 
             case PlayerClass.Mage:
-                _gear.AddChild(Part(new CylinderMesh { TopRadius = 0.18f, BottomRadius = 0.18f, Height = 0.03f }, dark, new Vector3(0f, 0.66f, 0f)));
-                _gear.AddChild(Part(new CylinderMesh { TopRadius = 0f, BottomRadius = 0.13f, Height = 0.4f }, dark, new Vector3(0f, 0.86f, 0f)));
-                _gear.AddChild(Part(new CylinderMesh { TopRadius = 0.025f, BottomRadius = 0.025f, Height = 1.05f }, wood, new Vector3(0.32f, 0.08f, 0.04f)));
-                _gear.AddChild(Part(new SphereMesh { Radius = 0.08f, Height = 0.16f }, Class.Color.Lightened(0.3f), new Vector3(0.32f, 0.64f, 0.04f), glow: 3f));
+            {
+                var (staff, _) = AddArms(_gear, 0.17f, 0.24f, 0.3f, 0.06f, null, skin, weaponRest: -0.3f);
+                Head();
+                _gear.AddChild(Flesh(Taper(0.2f, 0.34f, 0.6f), new Vector3(0f, -0.22f, 0f)));
+                Add(_gear, Cone(0.1f, 0.24f), new Color(0.9f, 0.9f, 0.92f), 0f, 0.28f, 0.14f, new Vector3(190f, 0f, 0f));
+                Add(_gear, Rod(0.25f, 0.025f), dark, 0f, 0.51f, 0f);
+                Add(_gear, Taper(0.1f, 0.16f, 0.24f), dark, 0f, 0.63f, -0.01f);
+                Add(_gear, Rod(0.165f, 0.04f), gold, 0f, 0.54f, 0f, metal: 0.6f);
+                Add(_gear, Cone(0.1f, 0.26f), dark, 0f, 0.84f, -0.09f, new Vector3(-38f, 0f, 0f));
+                Add(_gear, Ring(0.17f, 0.04f), dark, 0f, 0.26f, 0f);
+                Add(_gear, Rod(0.235f, 0.05f), gold, 0f, -0.08f, 0f, metal: 0.6f);
+                Add(_gear, Cube(0.15f, 0.2f, 0.05f), new Color(0.45f, 0.15f, 0.15f), -0.16f, -0.2f, 0.16f, new Vector3(0f, 0f, 8f));
+                Add(_gear, Cube(0.12f, 0.17f, 0.052f), new Color(0.92f, 0.88f, 0.78f), -0.16f, -0.2f, 0.158f, new Vector3(0f, 0f, 8f));
+
+                Add(staff, Rod(0.024f, 1.2f), wood, 0f, -0.2f, 0.02f, new Vector3(16f, 0f, 0f));
+                staff.AddChild(Arc(gold, new Vector3(0f, 0.44f, 0.27f), 0.1f, 0.016f, 130f, rotationDegrees: new Vector3(90f, 0f, 0f)));
+                Add(staff, Gem(0.075f), light, 0f, 0.47f, 0.2f, glow: 3f);
                 break;
+            }
         }
 
-        foreach (var part in _gear.GetChildren())
-            ((GeometryInstance3D)part).CastShadow = GeometryInstance3D.ShadowCastingSetting.Off;
+        foreach (var mesh in ModelMeshes())
+            mesh.CastShadow = GeometryInstance3D.ShadowCastingSetting.Off;
+    }
+
+    /// <summary>Призрак и невидимка просвечивают целиком: и тело, и снаряжение.</summary>
+    private void UpdateFade()
+    {
+        float fade = IsGhost ? 0.55f : IsInvisible ? 1f - InvisibleAlpha : 0f;
+        if (Mathf.IsEqualApprox(fade, _shownFade) || Body == null)
+            return;
+        _shownFade = fade;
+        foreach (var mesh in ModelMeshes())
+            mesh.Transparency = fade;
     }
 
     public void ResetStats(ClassDef playerClass)
@@ -306,6 +468,8 @@ public partial class Player : Actor
         InvisibleTurns = 0;
         _turnCounter = 0;
         _perks.Clear();
+        _pacts.Clear();
+        DamageDealt = KillsMade = RevivesMade = BiggestHit = GoldSpent = PotionsDrunk = LavaSteps = 0;
         Array.Clear(SkillCooldowns);
         BodyMaterial.AlbedoColor = DisplayColor;
 
@@ -362,7 +526,7 @@ public partial class Player : Actor
         Heal(MaxHp - before); // выросло максимальное здоровье — текущее растёт вместе с ним
     }
 
-    public int CooldownReduction => _perks.Sum(perk => perk.CooldownReduction);
+    public int CooldownReduction => _perks.Sum(perk => perk.CooldownReduction) + (HasPact(PactRule.Haste) ? 1 : 0);
 
     public bool Has(PerkEffect effect) => _perks.Any(perk => perk.Effect == effect);
 
@@ -389,7 +553,7 @@ public partial class Player : Actor
     {
         for (int i = 0; i < SkillCooldowns.Length; i++)
             if (i != except && SkillCooldowns[i] > 0)
-                SkillCooldowns[i]--;
+                SkillCooldowns[i] = Math.Max(0, SkillCooldowns[i] - (HasLegendary(LegendaryEffect.Echo) ? 2 : 1));
     }
 
     public void StartCooldown(int skillIndex) =>
@@ -470,6 +634,9 @@ public partial class Player : Actor
         Perks = _perks.Select(perk => perk.Name).ToList(),
         Items = Inventory.Items.Select(ItemSave.From).ToList(),
         Equipped = Inventory.Equipped.Select(ItemSave.From).ToList(),
+        Pacts = _pacts.Select(pact => pact.Name).ToList(),
+        DamageDealt = DamageDealt, KillsMade = KillsMade, BiggestHit = BiggestHit,
+        GoldSpent = GoldSpent, PotionsDrunk = PotionsDrunk, LavaSteps = LavaSteps,
     };
 
     /// <summary>allowDead — сохранить и нулевое здоровье (призрак в сетевом снимке мира).</summary>
@@ -491,6 +658,15 @@ public partial class Player : Actor
         _perks.Clear();
         _perks.AddRange((save.Perks ?? new List<string>()).Select(ClassCatalog.FindPerk).Where(perk => perk != null));
 
+        _pacts.Clear();
+        _pacts.AddRange((save.Pacts ?? new List<string>()).Select(Roguelike.Pacts.Find).Where(pact => pact != null));
+        DamageDealt = save.DamageDealt;
+        KillsMade = save.KillsMade;
+        BiggestHit = save.BiggestHit;
+        GoldSpent = save.GoldSpent;
+        PotionsDrunk = save.PotionsDrunk;
+        LavaSteps = save.LavaSteps;
+
         Inventory.Clear();
         foreach (var item in save.Equipped.Select(s => s.ToItem()).Where(item => item != null))
             Inventory.SetEquipped(item);
@@ -511,13 +687,16 @@ public partial class Player : Actor
         var total = new Stats();
         foreach (var item in Inventory.Equipped)
             total += item.Stats;
+        total += Inventory.SetBonuses + _build;
+        foreach (var pact in _pacts)
+            total += pact.Stats;
         foreach (var perk in _perks)
             total += perk.Bonus;
         Bonuses = total;
 
         Attack = _baseAttack + Bonuses.Attack + (StrengthTurns > 0 ? _strengthBonus : 0);
         Defense = Bonuses.Defense;
-        MaxHp = _baseMaxHp + Bonuses.MaxHp;
+        MaxHp = Math.Max(_baseMaxHp + Bonuses.MaxHp, 5); // сделки могут отнять много, но герой не должен умереть от них
         Hp = Mathf.Min(Hp, MaxHp); // сняли амулет жизни — здоровье не может быть выше максимума
     }
 
@@ -530,9 +709,8 @@ public partial class Player : Actor
     /// </summary>
     public override void _Process(double delta)
     {
-        base._Process(delta); // «дыхание» из Actor
-        if (_gear != null)
-            _gear.Visible = !IsInvisible && !IsGhost; // невидимка и призрак прячут снаряжение
+        base._Process(delta); // «дыхание» и шаги из Actor
+        UpdateFade();
 
         if (_heldKey == Key.None || !IsLocal)
             return;
@@ -579,15 +757,28 @@ public partial class Player : Actor
 
     private static Vector2I? DirectionFor(Key key) => key switch
     {
-        Key.W or Key.Up or Key.Kp8 => new Vector2I(0, -1),
-        Key.S or Key.Down or Key.Kp2 => new Vector2I(0, 1),
-        Key.A or Key.Left or Key.Kp4 => new Vector2I(-1, 0),
-        Key.D or Key.Right or Key.Kp6 => new Vector2I(1, 0),
-        Key.Q or Key.Kp7 => new Vector2I(-1, -1),
-        Key.E or Key.Kp9 => new Vector2I(1, -1),
-        Key.Z or Key.Kp1 => new Vector2I(-1, 1),
-        Key.C or Key.Kp3 => new Vector2I(1, 1),
-        Key.Space or Key.Kp5 => Vector2I.Zero,
-        _ => null,
+        // Стрелки и цифровой блок закреплены, остальное настраивается
+        Key.Up or Key.Kp8 => new Vector2I(0, -1),
+        Key.Down or Key.Kp2 => new Vector2I(0, 1),
+        Key.Left or Key.Kp4 => new Vector2I(-1, 0),
+        Key.Right or Key.Kp6 => new Vector2I(1, 0),
+        Key.Kp7 => new Vector2I(-1, -1),
+        Key.Kp9 => new Vector2I(1, -1),
+        Key.Kp1 => new Vector2I(-1, 1),
+        Key.Kp3 => new Vector2I(1, 1),
+        Key.Kp5 => Vector2I.Zero,
+        _ => KeyBindings.Find(key) switch
+        {
+            GameKey.Up => new Vector2I(0, -1),
+            GameKey.Down => new Vector2I(0, 1),
+            GameKey.Left => new Vector2I(-1, 0),
+            GameKey.Right => new Vector2I(1, 0),
+            GameKey.UpLeft => new Vector2I(-1, -1),
+            GameKey.UpRight => new Vector2I(1, -1),
+            GameKey.DownLeft => new Vector2I(-1, 1),
+            GameKey.DownRight => new Vector2I(1, 1),
+            GameKey.Wait => Vector2I.Zero,
+            _ => null,
+        },
     };
 }

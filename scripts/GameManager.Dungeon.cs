@@ -22,10 +22,13 @@ public partial class GameManager
     {
         var theme = _map.Theme;
         _environment.AmbientLightColor = theme.Ambient;
-        _environment.AmbientLightEnergy = theme.AmbientEnergy;
+        _environment.AmbientLightEnergy = theme.AmbientEnergy * 2f;
         // Туман подкрашен в цвет темы: синеватый в подземелье, зеленоватый в пещерах и крипте
         _environment.VolumetricFogAlbedo = theme.Ambient.Lightened(0.4f);
-    }
+
+        // Своя цветокоррекция у каждой темы, как в кино: тёплое подземелье, сырые пещеры, холодная крипта
+        _environment.AdjustmentSaturation = theme.Caves ? 1.2f : theme == Themes.Crypt ? 0.92f : 1.15f;
+        _environment.AdjustmentContrast = theme == Themes.Crypt ? 1.16f : 1.12f;    }
 
     // ---------- Двери ----------
 
@@ -62,6 +65,8 @@ public partial class GameManager
         switch (trap.Kind)
         {
             case TrapKind.Spikes:
+                if (hero.HasLegendary(LegendaryEffect.Salamander))
+                    break;
                 int damage = 2 + _floor / 2;
                 hero.TakeDamage(damage);
                 if (IsInvulnerable)
@@ -78,7 +83,15 @@ public partial class GameManager
 
             case TrapKind.Lava:
                 int burn = 3 + _floor / 2;
-                hero.TakeDamage(burn);
+                hero.LavaSteps++;
+                if (IsLocalHero(hero) && hero.LavaSteps >= 10)
+                    Deed("lavawalker");
+                if (hero.HasLegendary(LegendaryEffect.Salamander))
+                {
+                    hero.Heal(burn);
+                    Effects.FloatingText(this, cell, $"+{burn}", GoodColor);
+                    break;
+                }                hero.TakeDamage(burn);
                 if (IsInvulnerable)
                     hero.Heal(burn);
                 Effects.FloatingText(this, cell, $"-{burn}", DamageColor);
@@ -195,7 +208,7 @@ public partial class GameManager
         _sound.Play(Sound.Chest);
 
         int bonusFloors = chest.IsSecret ? 3 : 1;
-        int gold = (chest.IsSecret ? 30 : 10) + _floor * 3;
+        int gold = GoldFor(hero, (chest.IsSecret ? 30 : 10) + _floor * 3);
         hero.Gold += gold;
         Effects.FloatingText(this, chest.GridPos, $"+{gold} зол.", InfoColor);
         Tell(hero, $"В сундуке {gold} золота и добыча!", $"{hero.DisplayName} открывает сундук: {gold} золота и добыча.", InfoColor);

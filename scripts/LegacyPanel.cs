@@ -5,7 +5,8 @@ using Godot;
 namespace Roguelike;
 
 /// <summary>
-/// Меню «Наследие»: на осколки покупаются постоянные бонусы, рядом — достижения и бестиарий
+/// Лагерь у входа в подземелье: на осколки строятся постройки, спасённые жители открывают новые,
+/// рядом хроника, достижения и бестиарий
 /// (описание врага появляется, когда встретишь его хотя бы раз).
 /// </summary>
 public partial class LegacyPanel : CanvasLayer
@@ -15,6 +16,7 @@ public partial class LegacyPanel : CanvasLayer
     private Label _shards;
     private VBoxContainer _upgrades;
     private VBoxContainer _achievements;
+    private VBoxContainer _camp;
     private VBoxContainer _bestiary;
     private Button _backButton;
 
@@ -26,7 +28,7 @@ public partial class LegacyPanel : CanvasLayer
 
         var header = new HBoxContainer();
         column.AddChild(header);
-        header.AddChild(Ui.CreateTitle("Наследие", 38));
+        header.AddChild(Ui.CreateTitle("Доска памяти", 38));
         header.AddChild(new Control { SizeFlagsHorizontal = Control.SizeFlags.ExpandFill });
         _shards = Ui.CreateLabel(20);
         _shards.AddThemeColorOverride("font_color", new Color(0.6f, 0.85f, 1f));
@@ -36,9 +38,10 @@ public partial class LegacyPanel : CanvasLayer
         var columns = new HBoxContainer();
         columns.AddThemeConstantOverride("separation", 20);
         column.AddChild(columns);
-        _upgrades = CreateColumn(columns, "ПОСТОЯННЫЕ БОНУСЫ (ОДИНОЧНАЯ ИГРА)", 340f);
+        _upgrades = CreateColumn(columns, "ПОСТРОЙКИ (ОДИНОЧНАЯ ИГРА)", 350f);
+        _camp = CreateColumn(columns, "ЖИТЕЛИ И ХРОНИКА", 380f);
         _achievements = CreateColumn(columns, "ДОСТИЖЕНИЯ", 340f);
-        _bestiary = CreateColumn(columns, "БЕСТИАРИЙ", 380f);
+        _bestiary = CreateColumn(columns, "БЕСТИАРИЙ", 300f);
 
         _backButton = Ui.CreateButton("Назад", () => Closed?.Invoke());
         _backButton.SizeFlagsHorizontal = Control.SizeFlags.ShrinkBegin;
@@ -77,13 +80,16 @@ public partial class LegacyPanel : CanvasLayer
         _shards.Text = $"Осколки: {profile.Shards}";
         Clear(_upgrades);
         Clear(_achievements);
+        Clear(_camp);
         Clear(_bestiary);
 
         foreach (var upgrade in Profile.Upgrades)
         {
             int level = Profile.Level(upgrade.Id);
             bool full = level >= upgrade.MaxLevel;
-            string cost = full ? "максимум" : $"{Profile.Price(upgrade)} осколков";
+            bool open = Profile.IsOpen(upgrade);
+            string cost = !open ? $"спаси: {Array.Find(Story.Residents, resident => resident.Id == upgrade.Requires).Name}"
+                : full ? "максимум" : $"{Profile.Price(upgrade)} осколков";
             var button = Ui.CreateButton($"{upgrade.Name}  {level}/{upgrade.MaxLevel}\n{upgrade.Description}  •  {cost}", () =>
             {
                 if (Profile.TryBuy(upgrade))
@@ -92,7 +98,7 @@ public partial class LegacyPanel : CanvasLayer
             button.CustomMinimumSize = new Vector2(320f, 64f);
             button.Alignment = HorizontalAlignment.Left;
             button.AddThemeFontSizeOverride("font_size", 14);
-            button.Disabled = full || profile.Shards < Profile.Price(upgrade);
+            button.Disabled = !open || full || profile.Shards < Profile.Price(upgrade);
             _upgrades.AddChild(button);
         }
 
@@ -100,15 +106,33 @@ public partial class LegacyPanel : CanvasLayer
         {
             bool done = profile.Achievements.Contains(achievement.Id);
             var label = Ui.CreateWrappedLabel(15, 320f);
-            label.Text = $"{(done ? "✓ " : "")}{achievement.Name}\n{achievement.Description}  •  +{achievement.Reward}";
+            label.Text = $"{(done ? "✓ " : "")}{achievement.Name}\n{achievement.Description}  •  +{achievement.Reward}" +
+                (achievement.Prize != null ? $"\nНаграда: {achievement.Prize}" : "");
             label.Modulate = done ? new Color(0.65f, 1f, 0.7f) : new Color(1f, 1f, 1f, 0.55f);
             _achievements.AddChild(label);
         }
 
-        foreach (var type in Enemy.Types.Concat(Enemy.Bosses))
+        foreach (var resident in Story.Residents)
         {
+            bool saved = profile.Rescued.Contains(resident.Id);
+            var label = Ui.CreateWrappedLabel(15, 360f);
+            label.Text = saved ? $"{resident.Name}\n{resident.Camp}" : "??? (томится в подземелье)";
+            label.Modulate = saved ? Colors.White : new Color(1f, 1f, 1f, 0.45f);
+            _camp.AddChild(label);
+        }
+        for (int i = 0; i < Story.Notes.Length; i++)
+        {
+            var (title, text) = Story.Notes[i];
+            bool found = profile.Notes.Contains(i);
+            var label = Ui.CreateWrappedLabel(15, 360f);
+            label.Text = found ? $"{title}\n{text}" : $"{title}: не найдена";
+            label.Modulate = found ? Story.Tint : new Color(1f, 1f, 1f, 0.4f);
+            _camp.AddChild(label);
+        }
+
+        foreach (var type in Enemy.Types.Concat(Enemy.Bosses))        {
             bool seen = profile.Seen.Contains(type.Name);
-            var label = Ui.CreateWrappedLabel(15, 355f);
+            var label = Ui.CreateWrappedLabel(15, 280f);
             label.Text = seen ? $"{type.Name}\n{Enemy.Describe(type)}" : "???";
             if (seen)
                 label.AddThemeColorOverride("font_color", type.Color.Lightened(0.4f));

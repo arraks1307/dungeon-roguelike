@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using Godot;
 
 namespace Roguelike;
@@ -43,28 +44,164 @@ public partial class Actor : Node3D
     private readonly float _breathPhase = (float)GD.RandRange(0.0, Mathf.Tau);
     private float _breathTime;
 
+    // Шарниры модели: конечности качаются при ходьбе, рука с оружием замахивается при ударе
+    private readonly List<(Node3D Pivot, float Swing, float Home)> _limbs = new();
+    private float _stride;
+    private float _walkBlend;
+    private float _weaponRest;
+    private Tween _weaponTween;
+    private StandardMaterial3D _hitOverlay;
+    private Tween _flashTween;
+
+    protected Node3D WeaponArm;
+    protected Node3D Cape;
+    protected Node3D Spinner;           // деталь, которая медленно вращается (души вокруг некроманта)
+    protected float HoverHeight;        // больше нуля: существо парит и покачивается
+
+    /// <summary>Во сколько раз сильнее обычного «дышит» тело (у слизня это колыхание).</summary>
+    protected virtual float BreathAmount => 1f;
+
     public override void _Process(double delta)
     {
         if (Body == null || Settings.AnimationScale == 0f)
             return;
-        _breathTime += (float)delta;
-        float breath = Mathf.Sin(_breathTime * 2.2f + _breathPhase);
+        float step = (float)delta;
+        _breathTime += step;
+        float breath = Mathf.Sin(_breathTime * 2.2f + _breathPhase) * BreathAmount;
         // Чуть вытягиваемся вверх и сужаемся по бокам — объём «тела» визуально сохраняется
         Body.Scale = new Vector3(1f - 0.015f * breath, 1f + 0.035f * breath, 1f - 0.015f * breath);
+
+        bool moving = _moveTween != null && _moveTween.IsValid() && _moveTween.IsRunning();
+        bool attacking = _attackTween != null && _attackTween.IsValid() && _attackTween.IsRunning();
+        _walkBlend = Mathf.MoveToward(_walkBlend, moving ? 1f : 0f, step * 9f);
+        if (moving)
+            _stride += step * 17f;
+        AnimateLimbs();
+
+        if (Cape != null)
+            Cape.Rotation = new Vector3(0.1f + 0.55f * _walkBlend + 0.04f * Mathf.Sin(_breathTime * 1.7f), 0f, 0f);
+        Spinner?.RotateY(step * 0.9f);
+        if (HoverHeight > 0f && !attacking)
+            Body.Position = _bodyRestPosition + Vector3.Up * Mathf.Sin(_breathTime * 1.8f + _breathPhase) * HoverHeight;
+    }
+
+    private void AnimateLimbs()
+    {
+        bool swinging = _weaponTween != null && _weaponTween.IsValid() && _weaponTween.IsRunning();
+        foreach (var (pivot, swing, home) in _limbs)
+        {
+            if (swinging && pivot == WeaponArm)
+                continue;
+            pivot.Rotation = new Vector3(home + swing * Mathf.Sin(_stride) * 0.75f * _walkBlend, 0f, 0f);
+        }
     }
 
     /// <summary>Деталь модели (голова, оружие, глаза): простая фигура с цветом и, по желанию, свечением.</summary>
-    protected static MeshInstance3D Part(PrimitiveMesh mesh, Color color, Vector3 position, float glow = 0f, Vector3? rotationDegrees = null)
+    protected static MeshInstance3D Part(PrimitiveMesh mesh, Color color, Vector3 position, float glow = 0f, Vector3? rotationDegrees = null) =>
+        Shapes.Piece(mesh, color, position, rotationDegrees, glow);
+
+    /// <summary>Деталь с материалом тела: вместе с ним меняет цвет от мороза и невидимости.</summary>
+    protected MeshInstance3D Flesh(PrimitiveMesh mesh, Vector3 position, Vector3? rotationDegrees = null)
     {
-        var material = new StandardMaterial3D { AlbedoColor = color, Roughness = 0.55f };
-        if (glow > 0f)
-        {
-            material.EmissionEnabled = true;
-            material.Emission = color;
-            material.EmissionEnergyMultiplier = glow;
-        }
-        mesh.Material = material;
+        Shapes.Simplify(mesh);
+        mesh.Material = BodyMaterial;
         return new MeshInstance3D { Mesh = mesh, Position = position, RotationDegrees = rotationDegrees ?? Vector3.Zero };
+    }
+
+    /// <summary>Конечность: шарнир в плече или бедре, а сама фигура свисает вниз от него.</summary>
+    private Node3D AddLimb(Node3D parent, Vector3 pivot, float swing, float rest, float length, float radius, Color? color)
+    {
+        var limb = new Node3D { Position = pivot, Rotation = new Vector3(rest, 0f, 0f) };
+        var position = new Vector3(0f, -length / 2f, 0f);
+        limb.AddChild(color is { } solid
+            ? Shapes.Piece(Shapes.Pill(radius, length), solid, position, shadow: true)
+            : Flesh(Shapes.Pill(radius, length), position));
+        parent.AddChild(limb);
+        _limbs.Add((limb, swing, rest));
+        return limb;
+    }
+
+    /// <summary>Две ноги с ботинками. color = null — цвет тела.</summary>
+    protected void AddLegs(Node3D parent, float hipY, float hipX, float length, float radius, Color? color, Color boot)
+    {
+        foreach (float side in new[] { -1f, 1f })
+        {
+            var leg = AddLimb(parent, new Vector3(side * hipX, hipY, 0f), side, 0f, length, radius, color);
+            leg.AddChild(Shapes.Piece(Shapes.Cube(radius * 2.3f, 0.08f, radius * 3.4f), boot, new Vector3(0f, 0.04f - length, radius * 0.6f)));
+        }
+    }
+
+    /// <summary>
+    /// Две руки с кистями. Вещи в руке крепятся к шарниру на расстоянии длины руки вниз (y = -length).
+    /// Рука с оружием (со стороны +X) почти не качается при ходьбе и замахивается при ударе.
+    /// </summary>
+    protected (Node3D Weapon, Node3D Free) AddArms(Node3D parent, float shoulderY, float shoulderX, float length, float radius, Color? color, Color hand, float weaponRest = -0.5f)
+    {
+        var weapon = AddLimb(parent, new Vector3(shoulderX, shoulderY, 0f), 0.15f, weaponRest, length, radius, color);
+        var free = AddLimb(parent, new Vector3(-shoulderX, shoulderY, 0f), 0.7f, -0.25f, length, radius, color);
+        foreach (var arm in new[] { weapon, free })
+            arm.AddChild(Shapes.Piece(Shapes.Ball(radius * 1.25f), hand, new Vector3(0f, -length, 0f)));
+        WeaponArm = weapon;
+        _weaponRest = weaponRest;
+        return (weapon, free);
+    }
+
+    /// <summary>Плащ висит от плеч и отлетает назад при ходьбе (см. _Process).</summary>
+    protected Node3D AddCape(Node3D parent, Vector3 position, float width, float height, Color color)
+    {
+        var cape = new Node3D { Position = position };
+        cape.AddChild(Shapes.Piece(Shapes.Cube(width, height, 0.025f), color, new Vector3(0f, -height / 2f, 0f), shadow: true));
+        parent.AddChild(cape);
+        return cape;
+    }
+
+    protected void ClearLimbs()
+    {
+        _limbs.Clear();
+        WeaponArm = null;
+        Cape = null;
+    }
+
+    /// <summary>Все фигуры модели вместе с вложенными деталями. Полоска здоровья сюда не входит.</summary>
+    protected IEnumerable<MeshInstance3D> ModelMeshes()
+    {
+        var stack = new Stack<Node>();
+        stack.Push(Body);
+        while (stack.Count > 0)
+        {
+            var node = stack.Pop();
+            if (node is MeshInstance3D mesh)
+                yield return mesh;
+            foreach (var child in node.GetChildren())
+                stack.Push(child);
+        }
+    }
+
+    /// <summary>
+    /// Вспышка урона по всей модели. MaterialOverlay рисует поверх фигуры второй слой,
+    /// поэтому белеют и броня, и оружие, а их собственные материалы не меняются.
+    /// </summary>
+    private void FlashModel()
+    {
+        if (Body == null || !Effects.Enabled)
+            return;
+        _hitOverlay ??= new StandardMaterial3D
+        {
+            ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded,
+            Transparency = BaseMaterial3D.TransparencyEnum.Alpha,
+        };
+        _hitOverlay.AlbedoColor = new Color(1f, 1f, 1f, 0.8f);
+        foreach (var mesh in ModelMeshes())
+            mesh.MaterialOverlay = _hitOverlay;
+
+        _flashTween?.Kill();
+        _flashTween = CreateTween();
+        _flashTween.TweenProperty(_hitOverlay, "albedo_color:a", 0f, 0.22f);
+        _flashTween.TweenCallback(Callable.From(() =>
+        {
+            foreach (var mesh in ModelMeshes())
+                mesh.MaterialOverlay = null;
+        }));
     }
 
     /// <summary>Цвет, к которому тело возвращается после вспышки урона (заморозка, невидимость меняют его).</summary>
@@ -75,7 +212,9 @@ public partial class Actor : Node3D
     protected void CreateBody(PrimitiveMesh mesh, Color color, float height)
     {
         BaseColor = color;
-        BodyMaterial = new StandardMaterial3D { AlbedoColor = color, Roughness = 0.6f };
+        // Rim — светлая кайма по контуру: фигура читается на тёмном фоне
+        BodyMaterial = new StandardMaterial3D { AlbedoColor = color, Roughness = 0.5f, RimEnabled = true, Rim = 0.45f, RimTint = 0.6f };
+        Shapes.AddRelief(BodyMaterial);
         mesh.Material = BodyMaterial;
         _bodyRestPosition = new Vector3(0f, height, 0f);
         Body = new MeshInstance3D { Mesh = mesh, Position = _bodyRestPosition };
@@ -225,6 +364,18 @@ public partial class Actor : Node3D
             .SetTrans(Tween.TransitionType.Quad).SetEase(Tween.EaseType.In);
         _attackTween.TweenProperty(Body, "position", _bodyRestPosition, 0.14f * scale)
             .SetTrans(Tween.TransitionType.Sine).SetEase(Tween.EaseType.Out);
+
+        if (WeaponArm == null)
+            return;
+        // Рука сначала заносит оружие, потом рубит вниз и возвращается
+        _weaponTween?.Kill();
+        _weaponTween = CreateTween();
+        _weaponTween.TweenProperty(WeaponArm, "rotation:x", _weaponRest - 1.3f, 0.06f * scale)
+            .SetTrans(Tween.TransitionType.Quad).SetEase(Tween.EaseType.Out);
+        _weaponTween.TweenProperty(WeaponArm, "rotation:x", _weaponRest + 0.8f, 0.07f * scale)
+            .SetTrans(Tween.TransitionType.Quad).SetEase(Tween.EaseType.In);
+        _weaponTween.TweenProperty(WeaponArm, "rotation:x", _weaponRest, 0.16f * scale)
+            .SetTrans(Tween.TransitionType.Sine).SetEase(Tween.EaseType.Out);
     }
 
     public void TakeDamage(int amount)
@@ -234,6 +385,7 @@ public partial class Actor : Node3D
         // Вспышка белым и плавный возврат к обычному цвету
         BodyMaterial.AlbedoColor = Colors.White;
         CreateTween().TweenProperty(BodyMaterial, "albedo_color", DisplayColor, 0.25f);
+        FlashModel();
     }
 
     /// <summary>Сжимаемся в точку и удаляем узел из сцены.</summary>

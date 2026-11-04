@@ -74,6 +74,7 @@ public partial class GameManager
             return false;
         }
         hero.Gold -= price;
+        hero.GoldSpent += price;
         _goldSpentOnServices += price;
         _tradeCount++;
         return true;
@@ -126,7 +127,7 @@ public partial class GameManager
         if (!TryPay(hero, MysteryPrice))
             return;
 
-        var item = _rng.NextDouble() < LegendaryBoxChance ? ItemCatalog.RollLegendary(_rng) : RollEquipment(_floor + MysteryBonusFloors);
+        var item = _rng.NextDouble() < LegendaryBoxChance ? RollLegendaryItem() : RollEquipment(_floor + MysteryBonusFloors);
         hero.Inventory.TryAdd(item);
         _sound.Play(Sound.Chest);
         if (ShopOpenFor(hero))

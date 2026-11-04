@@ -75,9 +75,10 @@ public partial class GameManager
 
         if (pickup.Item == null)
         {
-            hero.Gold += pickup.Gold * _simGoldScale;
-            Tell(hero, $"Ты подбираешь {pickup.Gold} золота.", $"{hero.DisplayName} подбирает {pickup.Gold} золота.", InfoColor);
-            Effects.FloatingText(this, cell, $"+{pickup.Gold} зол.", InfoColor);
+            int gold = GoldFor(hero, pickup.Gold);
+            hero.Gold += gold * _simGoldScale;
+            Tell(hero, $"Ты подбираешь {gold} золота.", $"{hero.DisplayName} подбирает {gold} золота.", InfoColor);
+            Effects.FloatingText(this, cell, $"+{gold} зол.", InfoColor);
         }
         else if (hero.Inventory.TryAdd(pickup.Item))
         {
@@ -111,26 +112,24 @@ public partial class GameManager
         _inventoryPanel.Visible = false;
         _hud.Visible = true;
         UpdateHud();
+        TryShowLevelUp(); // раунд мог закончиться, пока было открыто окно
     }
 
-    /// <summary>Нажали на предмет в окне инвентаря.</summary>
+    /// <summary>Нажали на предмет в окне инвентаря. После смены снаряжения окно остаётся открытым.</summary>
     private void OnInventoryUse(int index)
     {
         if (_state != GameState.Inventory)
             return;
+        var items = _localHero.Inventory.Items;
+        bool equipment = index < items.Count && items[index].IsEquipment;
         SubmitLocalAction(HeroAction.UseItem(index), spent =>
         {
             if (_state != GameState.Inventory)
                 return; // пока действие шло по сети, окно уже закрыли
-            if (spent)
-            {
+            if (spent && !equipment)
                 CloseInventory();
-                TryShowLevelUp(); // раунд мог закончиться, пока было открыто окно
-            }
             else
-            {
                 _inventoryPanel.Refresh(_localHero, index);
-            }
         });
     }
 
@@ -159,6 +158,12 @@ public partial class GameManager
         {
             hero.Equip(index);
             Tell(hero, $"Ты экипируешь: {item.Name}.", $"{hero.DisplayName} экипирует: {item.Name}.", item.RarityColor);
+            if (item.Template.Set is { } set)
+            {
+                TellSetProgress(hero, set);
+                if (local && hero.Inventory.SetCount(set) >= set.Size)
+                    Deed("collector");
+            }
             _sound.Play(Sound.Equip);
             return true;
         }
@@ -172,8 +177,18 @@ public partial class GameManager
                         _hud.AddMessage("Ты и так полностью здоров.");
                     return false;
                 }
+                if (hero.HasLegendary(LegendaryEffect.GolemHeart))
+                {
+                    if (local)
+                        _hud.AddMessage("Сердце голема не принимает зелья.", DamageColor);
+                    return false;
+                }
+                power = PotionPower(hero, power);
                 inventory.TakeOne(index);
                 hero.Heal(power);
+                hero.PotionsDrunk++;
+                if (local && hero.PotionsDrunk >= 15)
+                    Deed("alchemist");
                 Tell(hero, $"Ты выпиваешь {item.Name}: +{power} здоровья.", $"{hero.DisplayName} выпивает {item.Name}.", GoodColor);
                 Effects.FloatingText(this, hero.GridPos, $"+{power}", GoodColor);
                 Effects.Burst(this, hero.GridPos, GoodColor, 12);
@@ -308,13 +323,24 @@ public partial class GameManager
     private bool ShouldSpawnMerchant() =>
         _floor >= 2 && (_floor % BossFloorInterval == 1 || _rng.NextDouble() < MerchantChance);
 
+    /// <summary>Сообщение о наборе: сколько частей надето и какая ступень только что заработала.</summary>
+    private void TellSetProgress(Player hero, ItemSet set)
+    {
+        int worn = hero.Inventory.SetCount(set);
+        var tier = System.Array.Find(set.Tiers, step => step.Count == worn);
+        string bonus = tier.Count == 0 ? "" : $" Бонус: {string.Join(", ", tier.Bonus.Describe())}.";
+        string progress = $"{set.Name}: {worn} из {set.Size}.{bonus}";
+        Tell(hero, progress, $"{hero.DisplayName}. {progress}", set.Color);
+    }
+
     private void SpawnMerchant()
     {
         if (!TryFindFreeCell(out var cell))
             return;
-        var stock = Enumerable.Range(0, Merchant.StockSize)
+        var stock = Enumerable.Range(0, Merchant.StockSize - 1)
             .Select(_ => ItemCatalog.Roll(_rng, _floor + 1)) // товары чуть лучше, чем на полу
             .ToList();
+        stock.Add(ItemCatalog.RollSetPiece(_rng, _floor + 1)); // у торговца всегда есть часть набора: это цель для золота
         _merchant = Merchant.Create(cell, stock);
         AddChild(_merchant);
     }
@@ -385,6 +411,7 @@ public partial class GameManager
         else
         {
             hero.Gold -= item.Price;
+            hero.GoldSpent += item.Price;
             hero.Inventory.TryAdd(item);
             _merchant.Stock.RemoveAt(index);
             _tradeCount++;

@@ -62,7 +62,7 @@ public partial class PauseMenu : CanvasLayer
         var controls = Ui.CreateCenteredScreen(this, 0.6f, out _controlsScreen);
         _controlsScreen.Visible = false;
         controls.AddChild(Ui.CreateTitle("Управление", 40));
-        controls.AddChild(Ui.CreateLabel(18, Controls));
+        controls.AddChild(_controlsText = Ui.CreateLabel(18, Controls));
         _backButton = Ui.CreateButton("Назад", () => CloseControls());
         controls.AddChild(_backButton);
     }
@@ -80,9 +80,22 @@ public partial class PauseMenu : CanvasLayer
         Ui.FocusLater(_resumeButton);
     }
 
+    private Label _controlsText;
+
+    /// <summary>Справка показывает настоящие клавиши игрока, а не исходные.</summary>
+    private static string ActualControls() => Controls
+        .Replace("WASD", KeyBindings.Walk)
+        .Replace("Q E Z C", KeyBindings.Diagonal)
+        .Replace("F, G", $"{KeyBindings.Name(GameKey.Skill1)}, {KeyBindings.Name(GameKey.Skill2)}")
+        .Replace("I — инвентарь", $"{KeyBindings.Name(GameKey.Inventory)} — инвентарь")
+        .Replace("X — выбросить", $"{KeyBindings.Name(GameKey.Drop)} — выбросить")
+        .Replace("M — скрыть", $"{KeyBindings.Name(GameKey.Minimap)} — скрыть")
+        .Replace("F пугает", $"{KeyBindings.Name(GameKey.Skill1)} пугает")
+        .Replace("G лечит", $"{KeyBindings.Name(GameKey.Skill2)} лечит");
+
     public void ShowControls()
     {
-        _mainScreen.Visible = false;
+        _controlsText.Text = ActualControls() + "\n\nИзменить клавиши можно в настройках.";        _mainScreen.Visible = false;
         _controlsScreen.Visible = true;
         Ui.FocusLater(_backButton);
     }

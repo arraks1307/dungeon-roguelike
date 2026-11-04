@@ -1,3 +1,4 @@
+using System.Linq;
 using System.Collections.Generic;
 
 namespace Roguelike;
@@ -20,6 +21,29 @@ public class Inventory
     public bool IsFull => Items.Count >= Capacity;
 
     public Item GetEquipped(EquipSlot slot) => _equipped.GetValueOrDefault(slot);
+
+    /// <summary>Сколько частей набора сейчас надето.</summary>
+    public int SetCount(ItemSet set) => Equipped.Count(item => item.Template.Set == set);
+
+    /// <summary>Наборы, части которых надеты.</summary>
+    public IEnumerable<ItemSet> WornSets => Equipped.Select(item => item.Template.Set).Where(set => set != null).Distinct();
+
+    /// <summary>Бонусы всех наборов: складываются все достигнутые ступени.</summary>
+    public Stats SetBonuses
+    {
+        get
+        {
+            var total = new Stats();
+            foreach (var set in WornSets)
+            {
+                int worn = SetCount(set);
+                foreach (var (count, bonus) in set.Tiers)
+                    if (worn >= count)
+                        total += bonus;
+            }
+            return total;
+        }
+    }
 
     /// <summary>Поместится ли предмет: есть свободная ячейка или неполная стопка того же вида.</summary>
     public bool CanAdd(Item item) => !IsFull || Items.Exists(existing => existing.CanStackWith(item));

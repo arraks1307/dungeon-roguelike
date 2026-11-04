@@ -171,5 +171,7 @@ godot --headless --path . -- --net-join=127.0.0.1 --net-rounds=200
 | `SaveSystem.cs`, `Settings.cs`, `HighScores.cs` | сохранение (JSON), настройки, рекорды |
 | `SoundManager.cs`, `MusicSynth.cs`, `Effects.cs` | синтез звуков и музыки, частицы и всплывающие цифры |
 | `GameManager.Shop.cs` | услуги торговца: заточка, лечение, ларец |
-| `SurfaceMaterials.cs`, `GameManager.Graphics.cs` | каменные текстуры из шума, туман, SSAO, качество графики |
+| `Story.cs`, `GameManager.Story.cs`, `RunSummaryPanel.cs` | сюжет и записи хрониста, сделки с подземельем, реликварий, пленники, достижения за поступки, сводка забега |
+| `Shapes.cs`, `Enemy.Models.cs`, `ItemPickup.Models.cs` | сборка моделей из простых фигур: герои, враги, боссы, предметы |
+| `SurfaceMaterials.cs`, `GameManager.Graphics.cs` | шейдер камня (кладка, плиты, мокрые блики), туман, SSAO, тонмаппинг, режимы графики до «Ультра» |
 | `Hud.cs`, `*Menu.cs`, `*Panel.cs`, `Minimap.cs`, `Ui.cs`, `UiTheme.cs` | интерфейс и его тема оформления |

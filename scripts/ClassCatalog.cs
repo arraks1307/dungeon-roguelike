@@ -12,6 +12,7 @@ public enum PlayerClass
     Mage,
     Priest,
     Rogue,
+    Berserk,
 }
 
 public enum SkillId
@@ -26,6 +27,8 @@ public enum SkillId
     Mend,
     Backstab,
     Smoke,
+    Rampage,
+    Bloodlust,
 }
 
 /// <summary>Активная способность: срабатывает по клавише F или G и потом перезаряжается за Cooldown атак героя.</summary>
@@ -34,7 +37,7 @@ public record SkillDef(SkillId Id, string Name, string Description, int Cooldown
 /// <summary>Класс героя: стартовые характеристики, снаряжение и две способности.</summary>
 public record ClassDef(
     PlayerClass Class, string Name, string Description, int MaxHp, int Attack, Color Color,
-    ItemTemplate[] StartingItems, SkillDef[] Skills);
+    ItemTemplate[] StartingItems, SkillDef[] Skills, string Unlock = null);
 
 /// <summary>Улучшение, которое выбирают при повышении уровня.</summary>
 public record Perk(string Name, string Description, Stats Bonus, int CooldownReduction = 0,
@@ -114,7 +117,19 @@ public static class ClassCatalog
             new SkillDef(SkillId.Smoke, "Дымовая завеса", "невидимость на 3 хода", 4),
         });
 
-    public static readonly ClassDef[] All = { Warrior, Ranger, Mage, Priest, Rogue };
+    public static readonly ClassDef Berserk = new(
+        PlayerClass.Berserk, "Берсерк",
+        "Платит здоровьем за сокрушительные удары и лечится в гуще боя.",
+        MaxHp: 44, Attack: 4, new Color(0.9f, 0.3f, 0.15f),
+        new[] { ItemCatalog.Dagger, ItemCatalog.HealthPotion, ItemCatalog.StrengthPotion },
+        new[]
+        {
+            new SkillDef(SkillId.Rampage, "Неистовство", "тройной удар по соседнему врагу за 10% здоровья", 2),
+            new SkillDef(SkillId.Bloodlust, "Жажда битвы", "лечит 15% здоровья за каждого врага рядом", 4),
+        },
+        Unlock: "pact5");
+
+    public static readonly ClassDef[] All = { Warrior, Ranger, Mage, Priest, Rogue, Berserk };
 
     public static ClassDef Get(PlayerClass playerClass) => All[(int)playerClass];
 

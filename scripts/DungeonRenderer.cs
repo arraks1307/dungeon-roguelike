@@ -22,12 +22,18 @@ public partial class DungeonRenderer : Node3D
     private DungeonTheme _theme;
     private MultiMesh _floors;
     private MultiMesh _walls;
+    private MultiMesh _rubble;
+    private MultiMesh _plants;
+    private readonly Dictionary<Vector2I, int> _plantCells = new();
+    private Color[] _plantTargets;
+    private readonly Dictionary<Vector2I, int> _rubbleCells = new();
+    private Color[] _rubbleTargets;
 
     private const float FogFadeSeconds = 0.22f;
     private readonly Dictionary<(MultiMesh Mesh, int Index), CellFade> _fades = new();
     private Color[] _floorTargets; // к какому цвету идёт каждая клетка; null — этаж только что построен
     private Color[] _wallTargets;
-    private MeshInstance3D _stairs;
+    private Node3D _stairs;
     private readonly Dictionary<Vector2I, int> _floorIndex = new();
     private readonly Dictionary<Vector2I, int> _wallIndex = new();
     private readonly List<(Vector2I Wall, Torch Torch)> _torches = new();
@@ -41,6 +47,7 @@ public partial class DungeonRenderer : Node3D
     {
         _map = map;
         _theme = map.Theme;
+        SurfaceMaterials.ApplyTheme(_theme);
         foreach (Node child in GetChildren())
             child.QueueFree();
         _floorIndex.Clear();
@@ -48,6 +55,8 @@ public partial class DungeonRenderer : Node3D
         _fades.Clear();
         _floorTargets = null;
         _wallTargets = null;
+        _rubbleTargets = null;
+        _plantTargets = null;
         _torches.Clear();
         _doors.Clear();
         _secretWalls.Clear();
@@ -83,27 +92,81 @@ public partial class DungeonRenderer : Node3D
         _floors = CreateMultiMesh(new BoxMesh { Size = new Vector3(1f, 0.1f, 1f), Material = SurfaceMaterials.Floor }, floorCells, -0.05f, _floorIndex);
         _walls = CreateMultiMesh(new BoxMesh { Size = new Vector3(1f, 1f, 1f), Material = SurfaceMaterials.Wall }, wallCells, 0.5f, _wallIndex);
 
-        _stairs = new MeshInstance3D
-        {
-            Mesh = new CylinderMesh
-            {
-                TopRadius = 0.3f, BottomRadius = 0.4f, Height = 0.15f,
-                Material = new StandardMaterial3D
-                {
-                    AlbedoColor = StairsColor, EmissionEnabled = true, Emission = StairsColor, EmissionEnergyMultiplier = 0.8f,
-                },
-            },
-            Position = new Vector3(map.StairsPos.X, 0.08f, map.StairsPos.Y),
-            Visible = false,
-        };
+        _stairs = CreateStairs();
+        _stairs.Position = new Vector3(map.StairsPos.X, 0f, map.StairsPos.Y);
+        _stairs.Visible = false;
         AddChild(_stairs);
+        CreateRubble(floorCells);
+        CreatePlants(floorCells);
 
         PlaceTorches();
         PlaceDecor();
     }
 
-    // ---------- Динамические изменения карты ----------
+    /// <summary>Лестница вниз: тёмный проём со ступенями и золотистый свет снизу.</summary>
+    private static Node3D CreateStairs()
+    {
+        var root = new Node3D();
+        root.AddChild(Mesh(new BoxMesh { Size = new Vector3(0.96f, 0.02f, 0.96f) }, new Color(0.03f, 0.03f, 0.04f), new Vector3(0f, 0.012f, 0f)));
+        for (int i = 0; i < 4; i++)
+        {
+            float height = 0.04f + i * 0.05f;
+            float depth = 0.86f - i * 0.2f;
+            root.AddChild(Mesh(new BoxMesh { Size = new Vector3(0.84f, height, depth) }, StairsColor.Darkened(0.35f - i * 0.05f), new Vector3(0f, height / 2f + 0.01f, (0.86f - depth) / 2f), glow: 0.25f));
+        }
+        root.AddChild(new OmniLight3D { LightColor = StairsColor, LightEnergy = 1.3f, OmniRange = 3.5f, Position = new Vector3(0f, 0.6f, 0f) });
+        return root;
+    }
 
+    /// <summary>
+    /// Каменная крошка на полу. Один MultiMesh на все камешки дешёв для видеокарты, а цвет каждого
+    /// проходит тот же туман войны, что и пол: в неизведанных клетках камешки чёрные.
+    /// </summary>
+    private void CreateRubble(List<Vector2I> floorCells)
+    {
+        _rubbleCells.Clear();
+        var cells = floorCells.Where(cell => _map.Get(cell) == Tile.Floor && _rng.NextDouble() < 0.35).ToList();
+        var mesh = new SphereMesh { Radius = 0.05f, Height = 0.05f, RadialSegments = 6, Rings = 3 };
+        mesh.Material = new StandardMaterial3D { VertexColorUseAsAlbedo = true, AlbedoColor = Colors.White, Roughness = 0.95f };
+        _rubble = new MultiMesh { TransformFormat = MultiMesh.TransformFormatEnum.Transform3D, UseColors = true, Mesh = mesh, InstanceCount = cells.Count };
+        for (int i = 0; i < cells.Count; i++)
+        {
+            var scale = new Vector3((float)_rng.NextDouble() * 1.4f + 0.5f, (float)_rng.NextDouble() * 0.6f + 0.4f, (float)_rng.NextDouble() * 1.4f + 0.5f);
+            var offset = new Vector3((float)_rng.NextDouble() - 0.5f, 0.01f, (float)_rng.NextDouble() - 0.5f) * 0.85f;
+            var basis = new Basis(Vector3.Up, (float)_rng.NextDouble() * Mathf.Tau).Scaled(scale);
+            _rubble.SetInstanceTransform(i, new Transform3D(basis, Actor.GridToWorld(cells[i]) + offset));
+            _rubble.SetInstanceColor(i, Colors.Black);
+            _rubbleCells[cells[i]] = i;
+        }
+        AddChild(new MultiMeshInstance3D { Multimesh = _rubble });
+    }
+
+    private Color PlantTint => _theme.Caves ? new Color(0.2f, 0.38f, 0.16f) : _theme == Themes.Crypt ? new Color(0.26f, 0.28f, 0.2f) : new Color(0.24f, 0.3f, 0.14f);
+
+    /// <summary>Трава и сорняки: у стен они растут чаще, в пещерах их много. Туман войны работает как у камешков.</summary>
+    private void CreatePlants(List<Vector2I> floorCells)
+    {
+        _plantCells.Clear();
+        double open = _theme.Caves ? 0.4 : _theme == Themes.Crypt ? 0.05 : 0.1;
+        double nearWall = _theme.Caves ? 0.85 : _theme == Themes.Crypt ? 0.25 : 0.5;
+        var cells = floorCells.Where(cell => _map.Get(cell) == Tile.Floor
+            && _rng.NextDouble() < (DungeonMap.Directions.Take(4).Any(d => _map.Get(cell + d) == Tile.Wall) ? nearWall : open)).ToList();
+
+        var mesh = CampScene.CreateTuft();
+        mesh.SurfaceSetMaterial(0, new ShaderMaterial { Shader = new Shader { Code = CampScene.GrassShader } });
+        _plants = new MultiMesh { TransformFormat = MultiMesh.TransformFormatEnum.Transform3D, UseColors = true, Mesh = mesh, InstanceCount = cells.Count };
+        for (int i = 0; i < cells.Count; i++)
+        {
+            var offset = new Vector3((float)_rng.NextDouble() - 0.5f, 0f, (float)_rng.NextDouble() - 0.5f) * 0.7f;
+            var basis = new Basis(Vector3.Up, (float)_rng.NextDouble() * Mathf.Tau).Scaled(Vector3.One * (1.1f + (float)_rng.NextDouble() * 0.9f));
+            _plants.SetInstanceTransform(i, new Transform3D(basis, Actor.GridToWorld(cells[i]) + offset));
+            _plants.SetInstanceColor(i, Colors.Black);
+            _plantCells[cells[i]] = i;
+        }
+        AddChild(new MultiMeshInstance3D { Multimesh = _plants, CastShadow = GeometryInstance3D.ShadowCastingSetting.Off });
+    }
+
+    // ---------- Динамические изменения карты ----------
     /// <summary>Дверь открылась — анимируем створку.</summary>
     public void OpenDoor(Vector2I cell)
     {
@@ -131,6 +194,8 @@ public partial class DungeonRenderer : Node3D
         bool snap = _floorTargets == null;
         _floorTargets ??= new Color[_floorIndex.Count];
         _wallTargets ??= new Color[_wallIndex.Count];
+        _rubbleTargets ??= new Color[_rubbleCells.Count];
+        _plantTargets ??= new Color[_plantCells.Count];
         bool animate = !snap && Effects.Enabled && Settings.AnimationScale > 0f;
 
         foreach (var (cell, index) in _floorIndex)
@@ -141,9 +206,16 @@ public partial class DungeonRenderer : Node3D
         }
         foreach (var (cell, index) in _wallIndex)
             SetCellColor(_walls, _wallTargets, index, CellColor(cell, _theme.Wall, visible), animate);
+        foreach (var (cell, index) in _plantCells)
+            SetCellColor(_plants, _plantTargets, index, CellColor(cell, PlantTint, visible), animate);
+        foreach (var (cell, index) in _rubbleCells)
+            SetCellColor(_rubble, _rubbleTargets, index, CellColor(cell, _theme.Floor.Darkened(0.25f), visible), animate);
 
         foreach (var (cell, wall) in _secretWalls)
-            ((StandardMaterial3D)((BoxMesh)wall.Mesh).Material).AlbedoColor = CellColor(cell, _theme.Wall, visible);
+        {
+            var color = CellColor(cell, _theme.Wall, visible);
+            ((ShaderMaterial)((BoxMesh)wall.Mesh).Material).SetShaderParameter("tint", new Vector3(color.R, color.G, color.B));
+        }
         foreach (var (cell, door) in _doors)
         {
             door.Visible = IsExplored(cell);
@@ -252,8 +324,8 @@ public partial class DungeonRenderer : Node3D
     {
         // Копия материала настоящих стен (Duplicate) — иначе потайную дверь выдала бы другая текстура.
         // Своя копия нужна, чтобы менять ей цвет (туман войны) отдельно от всех стен.
-        var material = (StandardMaterial3D)SurfaceMaterials.Wall.Duplicate();
-        material.AlbedoColor = Colors.Black;
+        var material = (ShaderMaterial)SurfaceMaterials.Wall.Duplicate();
+        material.SetShaderParameter("tint", new Vector3(0f, 0f, 0f));
         var wall = new MeshInstance3D
         {
             Mesh = new BoxMesh { Size = Vector3.One, Material = material },
@@ -263,12 +335,48 @@ public partial class DungeonRenderer : Node3D
         _secretWalls[cell] = wall;
     }
 
+    // Лава: тёмная корка, а между кусками медленно текут раскалённые жилы.
+    // Рисунок считается из мировых координат, поэтому соседние клетки сливаются в одно озеро
+    private const string LavaShader = @"
+shader_type spatial;
+
+varying vec3 world_pos;
+
+float hash(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
+
+float noise(vec2 p) {
+    vec2 i = floor(p);
+    vec2 f = fract(p);
+    f = f * f * (3.0 - 2.0 * f);
+    return mix(mix(hash(i), hash(i + vec2(1.0, 0.0)), f.x),
+               mix(hash(i + vec2(0.0, 1.0)), hash(i + vec2(1.0, 1.0)), f.x), f.y);
+}
+
+void vertex() {
+    world_pos = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xyz;
+}
+
+void fragment() {
+    vec2 uv = world_pos.xz * 2.2;
+    float flow = noise(uv + TIME * 0.12) + 0.5 * noise(uv * 2.3 - TIME * 0.09);
+    float crust = smoothstep(0.0, 0.2, abs(flow - 0.75));
+    vec3 hot = mix(vec3(1.0, 0.62, 0.12), vec3(0.7, 0.1, 0.01), crust);
+    ALBEDO = vec3(0.06, 0.04, 0.035);
+    ROUGHNESS = 0.7;
+    EMISSION = hot * mix(1.5, 0.12, crust);
+}
+";
+
+    private static ShaderMaterial _lavaMaterial;
+
+    private static ShaderMaterial LavaMaterial => _lavaMaterial ??= new ShaderMaterial { Shader = new Shader { Code = LavaShader } };
+
     private static Node3D CreateTrap(TrapKind kind)
     {
         var root = new Node3D();
         if (kind == TrapKind.Lava)
         {
-            root.AddChild(Mesh(new BoxMesh { Size = new Vector3(0.96f, 0.04f, 0.96f) }, new Color(1f, 0.4f, 0.05f), new Vector3(0f, 0.02f, 0f), glow: 2.5f));
+            root.AddChild(new MeshInstance3D { Mesh = new BoxMesh { Size = new Vector3(0.96f, 0.04f, 0.96f), Material = LavaMaterial }, Position = new Vector3(0f, 0.02f, 0f) });
         }
         else if (kind == TrapKind.Spikes)
         {
@@ -283,6 +391,11 @@ public partial class DungeonRenderer : Node3D
             var color = kind == TrapKind.Alarm ? new Color(1f, 0.25f, 0.2f) : new Color(0.4f, 0.6f, 1f);
             root.AddChild(Mesh(new CylinderMesh { TopRadius = 0.38f, BottomRadius = 0.38f, Height = 0.02f }, color, new Vector3(0f, 0.02f, 0f), glow: 1.5f));
             root.AddChild(Mesh(new CylinderMesh { TopRadius = 0.25f, BottomRadius = 0.25f, Height = 0.03f }, new Color(0.1f, 0.1f, 0.12f), new Vector3(0f, 0.025f, 0f)));
+            for (int i = 0; i < 6; i++)
+            {
+                float angle = i * Mathf.Tau / 6f;
+                root.AddChild(Shapes.Piece(Shapes.Cube(0.05f, 0.012f, 0.1f), color, new Vector3(Mathf.Sin(angle) * 0.17f, 0.045f, Mathf.Cos(angle) * 0.17f), new Vector3(0f, Mathf.RadToDeg(angle), 0f), glow: 2.5f));
+            }
         }
         return root;
     }
@@ -312,7 +425,21 @@ public partial class DungeonRenderer : Node3D
             var torch = new Torch { FlameColor = _theme.Torch, Position = new Vector3(chosen.X, 0.8f, chosen.Y + 0.55f), Visible = false };
             AddChild(torch);
             _torches.Add((chosen, torch));
-        }
+
+            // Знамя на стене рядом с факелом: обжитое место, а не голая коробка
+            var other = candidates.Where(cell => Mathf.Abs(cell.X - chosen.X) >= 2).ToList();
+            if (!_theme.Caves && other.Count > 0 && _rng.NextDouble() < 0.6)
+            {
+                var spot = other[_rng.Next(other.Count)];
+                var cloth = _theme == Themes.Crypt ? new Color(0.2f, 0.24f, 0.22f) : new Color(0.42f, 0.09f, 0.1f);
+                var banner = new Node3D { Position = new Vector3(spot.X, 0f, spot.Y + 0.53f), Visible = false };
+                banner.AddChild(Mesh(new BoxMesh { Size = new Vector3(0.56f, 0.03f, 0.04f) }, new Color(0.3f, 0.2f, 0.12f), new Vector3(0f, 0.93f, 0f)));
+                banner.AddChild(Mesh(new BoxMesh { Size = new Vector3(0.46f, 0.68f, 0.015f) }, cloth, new Vector3(0f, 0.58f, 0f)));
+                banner.AddChild(Mesh(new BoxMesh { Size = new Vector3(0.1f, 0.26f, 0.018f) }, new Color(0.85f, 0.68f, 0.3f), new Vector3(0f, 0.6f, 0.002f)));
+                banner.AddChild(Mesh(new BoxMesh { Size = new Vector3(0.26f, 0.08f, 0.018f) }, new Color(0.85f, 0.68f, 0.3f), new Vector3(0f, 0.66f, 0.002f)));
+                AddChild(banner);
+                _decor.Add((spot + new Vector2I(0, 1), banner));
+            }        }
     }
 
     /// <summary>
@@ -353,45 +480,89 @@ public partial class DungeonRenderer : Node3D
         switch (kind)
         {
             case DecorKind.Barrel:
-                root.AddChild(Mesh(new CylinderMesh { TopRadius = 0.17f, BottomRadius = 0.17f, Height = 0.45f }, new Color(0.5f, 0.32f, 0.15f), new Vector3(0f, 0.22f, 0f)));
-                root.AddChild(Mesh(new CylinderMesh { TopRadius = 0.18f, BottomRadius = 0.18f, Height = 0.04f }, new Color(0.3f, 0.3f, 0.32f), new Vector3(0f, 0.35f, 0f)));
+            {
+                var wood = new Color(0.5f, 0.32f, 0.15f);
+                root.AddChild(Mesh(new CylinderMesh { TopRadius = 0.15f, BottomRadius = 0.15f, Height = 0.46f, RadialSegments = 12, Rings = 1 }, wood, new Vector3(0f, 0.23f, 0f)));
+                root.AddChild(Shapes.Piece(Shapes.Taper(0.185f, 0.15f, 0.12f), wood.Lightened(0.08f), new Vector3(0f, 0.29f, 0f)));
+                root.AddChild(Shapes.Piece(Shapes.Taper(0.15f, 0.185f, 0.12f), wood.Lightened(0.08f), new Vector3(0f, 0.18f, 0f)));
+                root.AddChild(Shapes.Piece(Shapes.Rod(0.13f, 0.01f), wood.Darkened(0.4f), new Vector3(0f, 0.465f, 0f)));
+                foreach (float y in new[] { 0.09f, 0.235f, 0.38f })
+                    root.AddChild(Shapes.Piece(Shapes.Ring(y == 0.235f ? 0.187f : 0.162f, 0.012f), new Color(0.3f, 0.3f, 0.32f), new Vector3(0f, y, 0f), metal: 0.5f));
                 break;
+            }
             case DecorKind.Crate:
-                root.AddChild(Mesh(new BoxMesh { Size = new Vector3(0.35f, 0.35f, 0.35f) }, new Color(0.62f, 0.45f, 0.25f), new Vector3(0f, 0.17f, 0f)));
+            {
+                var wood = new Color(0.62f, 0.45f, 0.25f);
+                var frame = wood.Darkened(0.3f);
+                root.AddChild(Mesh(new BoxMesh { Size = new Vector3(0.36f, 0.36f, 0.36f) }, wood, new Vector3(0f, 0.18f, 0f)));
+                foreach (float side in new[] { -1f, 1f })
+                {
+                    root.AddChild(Shapes.Piece(Shapes.Cube(0.04f, 0.37f, 0.37f), frame, new Vector3(side * 0.17f, 0.18f, 0f)));
+                    root.AddChild(Shapes.Piece(Shapes.Cube(0.37f, 0.04f, 0.37f), frame, new Vector3(0f, 0.18f + side * 0.17f, 0f)));
+                    root.AddChild(Shapes.Piece(Shapes.Cube(0.34f, 0.03f, 0.375f), frame, new Vector3(0f, 0.18f, 0f), new Vector3(0f, 0f, side * 45f)));
+                }
                 break;
+            }
             case DecorKind.Mushroom:
-                root.AddChild(Mesh(new CylinderMesh { TopRadius = 0.03f, BottomRadius = 0.04f, Height = 0.2f }, new Color(0.85f, 0.85f, 0.75f), new Vector3(0f, 0.1f, 0f)));
-                root.AddChild(Mesh(new SphereMesh { Radius = 0.12f, Height = 0.12f }, new Color(0.3f, 0.95f, 0.9f), new Vector3(0f, 0.22f, 0f), glow: 1.2f));
+                foreach (var (x, z, size) in new[] { (0f, 0f, 1f), (0.13f, 0.07f, 0.65f), (-0.1f, 0.1f, 0.5f) })
+                {
+                    root.AddChild(Shapes.Piece(Shapes.Taper(0.02f, 0.04f, 0.2f * size), new Color(0.85f, 0.85f, 0.75f), new Vector3(x, 0.1f * size, z)));
+                    root.AddChild(Mesh(Shapes.Ball(0.12f * size, 0.55f), new Color(0.3f, 0.95f, 0.9f), new Vector3(x, 0.21f * size, z), glow: 1.2f));
+                    root.AddChild(Shapes.Piece(Shapes.Ball(0.02f * size), new Color(0.9f, 1f, 1f), new Vector3(x + 0.05f * size, 0.255f * size, z), glow: 1.5f));
+                }
                 break;
             case DecorKind.Rock:
-                root.AddChild(Mesh(new SphereMesh { Radius = 0.2f, Height = 0.22f }, new Color(0.4f, 0.38f, 0.36f), new Vector3(0f, 0.08f, 0f)));
+                foreach (var (x, z, size, tilt) in new[] { (0f, 0f, 0.2f, 12f), (0.2f, 0.08f, 0.12f, -20f), (-0.15f, 0.12f, 0.09f, 30f) })
+                {
+                    var mesh = new SphereMesh { Radius = size, Height = size * 1.3f, RadialSegments = 6, Rings = 3 };
+                    root.AddChild(Mesh(mesh, new Color(0.4f, 0.38f, 0.36f).Lightened(size * 0.3f), new Vector3(x, size * 0.45f, z)));
+                    root.GetChild<Node3D>(root.GetChildCount() - 1).RotationDegrees = new Vector3(tilt, tilt * 2f, 0f);
+                }
                 break;
             case DecorKind.Bones:
-                root.AddChild(Mesh(new SphereMesh { Radius = 0.08f, Height = 0.14f }, new Color(0.9f, 0.88f, 0.8f), new Vector3(0f, 0.06f, 0f)));
-                root.AddChild(Mesh(new BoxMesh { Size = new Vector3(0.3f, 0.04f, 0.05f) }, new Color(0.9f, 0.88f, 0.8f), new Vector3(0.1f, 0.02f, 0.1f)));
-                root.AddChild(Mesh(new BoxMesh { Size = new Vector3(0.05f, 0.04f, 0.28f) }, new Color(0.9f, 0.88f, 0.8f), new Vector3(-0.1f, 0.02f, 0.05f)));
+            {
+                var bone = new Color(0.9f, 0.88f, 0.8f);
+                root.AddChild(Mesh(Shapes.Ball(0.085f), bone, new Vector3(0f, 0.08f, 0f)));
+                root.AddChild(Shapes.Piece(Shapes.Cube(0.09f, 0.04f, 0.07f), bone.Darkened(0.1f), new Vector3(0f, 0.03f, 0.06f)));
+                foreach (float side in new[] { -1f, 1f })
+                    root.AddChild(Shapes.Piece(Shapes.Ball(0.022f), new Color(0.08f, 0.07f, 0.07f), new Vector3(side * 0.034f, 0.09f, 0.073f)));
+                foreach (var (x, z, turn) in new[] { (0.16f, 0.09f, 20f), (-0.14f, 0.12f, -50f), (0.05f, -0.15f, 85f) })
+                {
+                    root.AddChild(Shapes.Piece(Shapes.Rod(0.013f, 0.24f), bone, new Vector3(x, 0.02f, z), new Vector3(90f, turn, 0f)));
+                    foreach (float end in new[] { -0.12f, 0.12f })
+                        root.AddChild(Shapes.Piece(Shapes.Ball(0.026f), bone, new Vector3(x + Mathf.Sin(Mathf.DegToRad(turn)) * end, 0.022f, z + Mathf.Cos(Mathf.DegToRad(turn)) * end)));
+                }
                 break;
+            }
             case DecorKind.Tombstone:
-                root.AddChild(Mesh(new BoxMesh { Size = new Vector3(0.35f, 0.5f, 0.1f) }, new Color(0.5f, 0.52f, 0.55f), new Vector3(0f, 0.25f, 0f)));
+            {
+                var stone = new Color(0.5f, 0.52f, 0.55f);
+                root.AddChild(Shapes.Piece(Shapes.Cube(0.46f, 0.06f, 0.22f), stone.Darkened(0.25f), new Vector3(0f, 0.03f, 0f)));
+                root.AddChild(Mesh(new BoxMesh { Size = new Vector3(0.34f, 0.36f, 0.09f) }, stone, new Vector3(0f, 0.24f, 0f)));
+                root.AddChild(Shapes.Piece(Shapes.Rod(0.17f, 0.09f), stone, new Vector3(0f, 0.42f, 0f), new Vector3(90f, 0f, 0f)));
+                root.AddChild(Shapes.Piece(Shapes.Cube(0.03f, 0.2f, 0.01f), stone.Darkened(0.5f), new Vector3(0f, 0.32f, 0.048f)));
+                root.AddChild(Shapes.Piece(Shapes.Cube(0.13f, 0.03f, 0.01f), stone.Darkened(0.5f), new Vector3(0f, 0.36f, 0.048f)));
                 break;
+            }
             case DecorKind.Candle:
-                root.AddChild(Mesh(new CylinderMesh { TopRadius = 0.04f, BottomRadius = 0.04f, Height = 0.2f }, new Color(0.95f, 0.92f, 0.85f), new Vector3(0f, 0.1f, 0f)));
-                root.AddChild(Mesh(new SphereMesh { Radius = 0.035f, Height = 0.08f }, new Color(0.5f, 1f, 0.6f), new Vector3(0f, 0.24f, 0f), glow: 3f));
+            {
+                var wax = new Color(0.95f, 0.92f, 0.85f);
+                root.AddChild(Shapes.Piece(Shapes.Taper(0.08f, 0.13f, 0.03f), wax.Darkened(0.1f), new Vector3(0f, 0.015f, 0f)));
+                foreach (var (x, z, height) in new[] { (0f, 0f, 0.24f), (0.07f, 0.05f, 0.14f), (-0.06f, 0.05f, 0.1f) })
+                {
+                    root.AddChild(Mesh(Shapes.Rod(0.03f, height), wax, new Vector3(x, height / 2f, z)));
+                    root.AddChild(Shapes.Piece(Shapes.Ball(0.022f, 1.6f), new Color(0.5f, 1f, 0.6f), new Vector3(x, height + 0.03f, z), glow: 3f));
+                }
                 break;
+            }
         }
         return root;
     }
 
     private static MeshInstance3D Mesh(PrimitiveMesh mesh, Color color, Vector3 position, float glow = 0f)
     {
-        var material = new StandardMaterial3D { AlbedoColor = color, Roughness = 0.8f };
-        if (glow > 0f)
-        {
-            material.EmissionEnabled = true;
-            material.Emission = color;
-            material.EmissionEnergyMultiplier = glow;
-        }
-        mesh.Material = material;
+        Shapes.Simplify(mesh);
+        mesh.Material = Shapes.Material(color, glow);
         return new MeshInstance3D { Mesh = mesh, Position = position };
     }
 

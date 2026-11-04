@@ -23,17 +23,19 @@ public partial class Chest : Node3D
 
     public override void _Ready()
     {
-        AddPart(new BoxMesh { Size = new Vector3(0.6f, 0.32f, 0.42f) }, Wood, new Vector3(0f, 0.16f, 0f));
-        AddPart(new BoxMesh { Size = new Vector3(0.62f, 0.12f, 0.44f) }, Wood.Darkened(0.2f), new Vector3(0f, 0.38f, 0f));
-        // Металлические полосы и замок
-        AddPart(new BoxMesh { Size = new Vector3(0.06f, 0.46f, 0.45f) }, Metal, new Vector3(-0.2f, 0.22f, 0f));
-        AddPart(new BoxMesh { Size = new Vector3(0.06f, 0.46f, 0.45f) }, Metal, new Vector3(0.2f, 0.22f, 0f));
-        AddPart(new BoxMesh { Size = new Vector3(0.1f, 0.1f, 0.04f) }, Metal, new Vector3(0f, 0.3f, 0.23f));
-    }
-
-    private void AddPart(BoxMesh mesh, Color color, Vector3 position)
-    {
-        mesh.Material = new StandardMaterial3D { AlbedoColor = color, Roughness = 0.7f };
-        AddChild(new MeshInstance3D { Mesh = mesh, Position = position });
+        AddChild(Shapes.Piece(Shapes.Cube(0.6f, 0.3f, 0.42f), Wood, new Vector3(0f, 0.15f, 0f), shadow: true));
+        // Полукруглая крышка: нижняя половина цилиндра спрятана в корпусе
+        AddChild(Shapes.Piece(Shapes.Rod(0.21f, 0.6f), Wood.Darkened(0.15f), new Vector3(0f, 0.3f, 0f), new Vector3(0f, 0f, 90f), shadow: true));
+        for (int i = -1; i <= 1; i++)
+            AddChild(Shapes.Piece(Shapes.Cube(0.012f, 0.3f, 0.425f), Wood.Darkened(0.45f), new Vector3(i * 0.1f + 0.05f, 0.15f, 0f)));
+        AddChild(Shapes.Piece(Shapes.Cube(0.62f, 0.035f, 0.44f), Metal, new Vector3(0f, 0.295f, 0f), metal: 0.5f));
+        foreach (float x in new[] { -0.2f, 0.2f })
+        {
+            AddChild(Shapes.Piece(Shapes.Cube(0.05f, 0.31f, 0.44f), Metal, new Vector3(x, 0.155f, 0f), metal: 0.5f));
+            AddChild(Shapes.Piece(Shapes.Rod(0.218f, 0.05f), Metal, new Vector3(x, 0.3f, 0f), new Vector3(0f, 0f, 90f), metal: 0.5f));
+        }
+        // Замок с золотой накладкой
+        AddChild(Shapes.Piece(Shapes.Cube(0.11f, 0.13f, 0.03f), Metal, new Vector3(0f, 0.27f, 0.22f), metal: 0.5f));
+        AddChild(Shapes.Piece(Shapes.Ball(0.035f), new Color(1f, 0.8f, 0.3f), new Vector3(0f, 0.27f, 0.24f), glow: 0.6f, metal: 0.7f));
     }
 }

@@ -17,32 +17,18 @@ public partial class ItemPickup : Node3D
 
     public Color MapColor => Item?.Color ?? GoldColor;
 
-    private MeshInstance3D _mesh;
+    private Node3D _model;
     private float _time;
 
     public static ItemPickup Create(Item item, Vector2I cell)
     {
         var pickup = new ItemPickup { Item = item, Position = Actor.GridToWorld(cell) };
 
-        PrimitiveMesh mesh = item.Kind switch
-        {
-            ItemKind.Weapon => new BoxMesh { Size = new Vector3(0.08f, 0.06f, 0.6f) },
-            ItemKind.Armor => new BoxMesh { Size = new Vector3(0.4f, 0.35f, 0.15f) },
-            ItemKind.Helmet => new SphereMesh { Radius = 0.18f, Height = 0.22f },
-            ItemKind.Ring => new TorusMesh { InnerRadius = 0.08f, OuterRadius = 0.14f },
-            ItemKind.Amulet => new TorusMesh { InnerRadius = 0.1f, OuterRadius = 0.16f },
-            ItemKind.Bomb => new SphereMesh { Radius = 0.16f, Height = 0.32f },
-            ItemKind.HealthPotion or ItemKind.StrengthPotion or ItemKind.InvisibilityPotion =>
-                new CylinderMesh { TopRadius = 0.07f, BottomRadius = 0.15f, Height = 0.3f },
-            _ => new CylinderMesh { TopRadius = 0.07f, BottomRadius = 0.07f, Height = 0.4f }, // свиток
-        };
-        pickup.AddMesh(mesh, item.Color, 0.4f);
+        pickup.CreateModel();
+        pickup.BuildModel(item);
 
-        if (item.Kind is ItemKind.TeleportScroll or ItemKind.FireScroll or ItemKind.FreezeScroll or ItemKind.MapScroll)
-            pickup._mesh.RotationDegrees = new Vector3(0f, 0f, 90f); // свиток лежит на боку
-        if (item.Kind is ItemKind.Ring or ItemKind.Amulet)
-            pickup._mesh.RotationDegrees = new Vector3(90f, 0f, 0f); // кольцо стоит «на ребре»
-
+        if (item.Rarity >= Rarity.Epic)
+            pickup.AddBeam(item.RarityColor);
         if (item.Rarity != Rarity.Common)
         {
             pickup.AddChild(new OmniLight3D
@@ -59,27 +45,46 @@ public partial class ItemPickup : Node3D
     public static ItemPickup CreateGold(int amount, Vector2I cell)
     {
         var pickup = new ItemPickup { Gold = amount, Position = Actor.GridToWorld(cell) };
-        pickup.AddMesh(new CylinderMesh { TopRadius = 0.16f, BottomRadius = 0.18f, Height = 0.1f }, GoldColor, 0.6f);
+        pickup.CreateModel();
+        pickup.BuildCoins();
         return pickup;
     }
 
-    private void AddMesh(PrimitiveMesh mesh, Color color, float glow)
+    /// <summary>Световой столб над ценной вещью: её видно издалека.</summary>
+    private void AddBeam(Color color)
     {
-        mesh.Material = new StandardMaterial3D
+        var ramp = new Gradient();
+        ramp.SetColor(0, new Color(color, 0.5f));
+        ramp.SetColor(1, new Color(color, 0f));
+        var fade = new GradientTexture2D { Gradient = ramp, Width = 8, Height = 64, FillFrom = new Vector2(0f, 1f), FillTo = Vector2.Zero };
+        AddChild(new MeshInstance3D
         {
-            AlbedoColor = color,
-            EmissionEnabled = true,
-            Emission = color,
-            EmissionEnergyMultiplier = glow,
-        };
-        _mesh = new MeshInstance3D { Mesh = mesh, Position = new Vector3(0f, FloatHeight, 0f) };
-        AddChild(_mesh);
+            Mesh = new QuadMesh
+            {
+                Size = new Vector2(0.45f, 2.4f),
+                Material = new StandardMaterial3D
+                {
+                    AlbedoTexture = fade,
+                    Transparency = BaseMaterial3D.TransparencyEnum.Alpha,
+                    BlendMode = BaseMaterial3D.BlendModeEnum.Add,
+                    ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded,
+                    BillboardMode = BaseMaterial3D.BillboardModeEnum.FixedY,
+                },
+            },
+            Position = new Vector3(0f, 1.2f, 0f),
+            CastShadow = GeometryInstance3D.ShadowCastingSetting.Off,
+        });
+    }
+
+    private void CreateModel()    {
+        _model = new Node3D { Position = new Vector3(0f, FloatHeight, 0f) };
+        AddChild(_model);
     }
 
     public override void _Process(double delta)
     {
         _time += (float)delta;
         Rotation = new Vector3(0f, _time * 0.8f, 0f);
-        _mesh.Position = new Vector3(0f, FloatHeight + Mathf.Sin(_time * 2f) * 0.05f, 0f);
+        _model.Position = new Vector3(0f, FloatHeight + Mathf.Sin(_time * 2f) * 0.05f, 0f);
     }
 }

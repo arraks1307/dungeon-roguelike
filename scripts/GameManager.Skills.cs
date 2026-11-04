@@ -42,16 +42,18 @@ public partial class GameManager
             SkillId.Mend => Mend(hero),
             SkillId.Backstab => Backstab(hero),
             SkillId.Smoke => Smoke(hero),
+            SkillId.Rampage => Rampage(hero),
+            SkillId.Bloodlust => Bloodlust(hero),
             _ => false,
         };
         if (!used)
             return false;
 
         hero.StartCooldown(index);
-        if (skill.Id is not (SkillId.SecondWind or SkillId.Mend or SkillId.Smoke))
+        if (skill.Id is not (SkillId.SecondWind or SkillId.Mend or SkillId.Smoke or SkillId.Bloodlust))
             hero.ChargeSkills(except: index); // боевая способность — тоже атака: заряжает вторую
         _tutorialSkillUsed = true;
-        if (hero.IsInvisible && skill.Id is not (SkillId.SecondWind or SkillId.Smoke))
+        if (hero.IsInvisible && skill.Id is not (SkillId.SecondWind or SkillId.Smoke or SkillId.Bloodlust))
         {
             hero.BreakInvisibility();
             Tell(hero, "Способность выдаёт тебя — невидимость пропала.", $"{hero.DisplayName} выдаёт себя способностью.");
@@ -274,6 +276,12 @@ public partial class GameManager
 
     private void CloseClassSelect()
     {
+        if (_draftWorld != null)
+        {
+            _classSelect.Visible = false;
+            _worldCreatePanel.Open();
+            return;
+        }
         _classSelect.Visible = false;
         _mainMenu.ShowMain();
     }

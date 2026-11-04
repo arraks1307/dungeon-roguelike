@@ -37,6 +37,9 @@ public partial class Hud : CanvasLayer
     private LineEdit _chatEdit;
     private readonly Dictionary<ProgressBar, Tween> _barTweens = new();
     private ColorRect _fade;
+    private Control _danger;
+    private double _dangerTime;
+    private bool _lowHealth;
     private PanelContainer _tooltip;
     private Label _tooltipLabel;
     private Tween _fadeTween;
@@ -49,8 +52,14 @@ public partial class Hud : CanvasLayer
     public event System.Action ChatCancelled;
     public event System.Action TutorialSkipRequested;
 
+    /// <summary>Карточка итогов забега.</summary>
+    public RunSummaryPanel Summary { get; private set; }
+
     public override void _Ready()
     {
+        Summary = new RunSummaryPanel();
+        AddChild(Summary);
+
         // MouseFilter.Ignore везде, где можно: иначе HUD «съедал» бы колёсико мыши для зума
         var root = new Control { Theme = UiTheme.Main, MouseFilter = Control.MouseFilterEnum.Ignore };
         root.SetAnchorsPreset(Control.LayoutPreset.FullRect);
@@ -58,6 +67,9 @@ public partial class Hud : CanvasLayer
 
         // Виньетка — первой, чтобы оказаться под всеми остальными элементами
         root.AddChild(UiTheme.CreateVignette(0.4f));
+        _danger = UiTheme.CreateVignette(0.5f, new Color(0.75f, 0.03f, 0.02f));
+        _danger.Visible = false;
+        root.AddChild(_danger);
 
         var margin = new MarginContainer { MouseFilter = Control.MouseFilterEnum.Ignore };
         margin.SetAnchorsPreset(Control.LayoutPreset.FullRect);
@@ -238,8 +250,20 @@ public partial class Hud : CanvasLayer
         card.AddChild(_gameOverLabel);
     }
 
+    /// <summary>При низком здоровье края экрана пульсируют красным.</summary>
+    public override void _Process(double delta)
+    {
+        if (!_lowHealth)
+            return;
+        _dangerTime += delta;
+        float pulse = 0.55f + 0.3f * Mathf.Sin((float)_dangerTime * 4f);
+        _danger.Modulate = new Color(1f, 1f, 1f, pulse);
+    }
+
     public void UpdateStats(Player player, int floor, int kills)
     {
+        _lowHealth = !player.IsGhost && player.Hp * 100 < player.MaxHp * 30;
+        _danger.Visible = _lowHealth;
         // В отряде у героя есть имя игрока — показываем его рядом с классом
         _classLabel.Text = player.DisplayName == player.Class.Name
             ? $"{player.Class.Name}  •  уровень {player.Level}"
@@ -285,7 +309,7 @@ public partial class Hud : CanvasLayer
             style.ContentMarginLeft = style.ContentMarginRight = 10f;
             chip.AddThemeStyleboxOverride("panel", style);
 
-            string key = i == 0 ? "F" : "G";
+            string key = KeyBindings.Name(i == 0 ? GameKey.Skill1 : GameKey.Skill2);
             var label = Ui.CreateLabel(14, ready ? $"{key}  {skill.Name}" : $"{key}  {skill.Name}  {cooldown}");
             label.AddThemeColorOverride("font_color", ready ? UiTheme.Text : UiTheme.TextMuted);
             chip.AddChild(label);
@@ -537,5 +561,9 @@ public partial class Hud : CanvasLayer
         _gameOverPanel.Visible = true;
     }
 
-    public void HideGameOver() => _gameOverPanel.Visible = false;
+    public void HideGameOver()
+    {
+        _gameOverPanel.Visible = false;
+        Summary.Visible = false;
+    }
 }

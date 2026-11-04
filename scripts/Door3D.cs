@@ -31,9 +31,38 @@ public partial class Door3D : Node3D
             Mesh = new BoxMesh { Size = new Vector3(Width, PanelHeight, 0.12f), Material = _material },
             Position = new Vector3(Width / 2f, PanelHeight / 2f, 0f),
         });
+
+        // Доски, железные полосы и кольцо-ручка. Железо темнеет вместе с дверью в тумане войны
+        _iron = new StandardMaterial3D { AlbedoColor = Colors.Black, Roughness = 0.45f, Metallic = 0.5f };
+        foreach (float side in new[] { -1f, 1f })
+        {
+            AddIron(Shapes.Cube(Width - 0.06f, 0.07f, 0.14f), new Vector3(Width / 2f, PanelHeight / 2f + side * 0.27f, 0f));
+            AddIron(Shapes.Ball(0.03f), new Vector3(0.08f, PanelHeight / 2f + side * 0.27f, side * 0.08f));
+        }
+        foreach (float x in new[] { 0.2f, 0.4f, 0.6f, 0.8f })
+            _hinge.AddChild(new MeshInstance3D
+            {
+                Mesh = new BoxMesh { Size = new Vector3(0.012f, PanelHeight, 0.125f), Material = Groove },
+                Position = new Vector3(x, PanelHeight / 2f, 0f),
+            });
+        AddIron(Shapes.Ring(0.05f, 0.012f), new Vector3(0.84f, 0.5f, 0.08f), new Vector3(90f, 0f, 0f));
     }
 
-    public void SetColor(Color color) => _material.AlbedoColor = color;
+    private StandardMaterial3D _iron;
+    private static readonly StandardMaterial3D Groove = new() { AlbedoColor = Colors.Black };
+
+    private void AddIron(PrimitiveMesh mesh, Vector3 position, Vector3? turn = null)
+    {
+        Shapes.Simplify(mesh);
+        mesh.Material = _iron;
+        _hinge.AddChild(new MeshInstance3D { Mesh = mesh, Position = position, RotationDegrees = turn ?? Vector3.Zero });
+    }
+
+    public void SetColor(Color color)
+    {
+        _material.AlbedoColor = color;
+        _iron.AlbedoColor = color.Lerp(new Color(0.55f, 0.55f, 0.6f), color.V).Darkened(0.35f);
+    }
 
     public void Open(bool instant = false)
     {

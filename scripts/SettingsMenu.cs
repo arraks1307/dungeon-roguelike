@@ -56,6 +56,7 @@ public partial class SettingsMenu : CanvasLayer
         _graphics.AddThemeFontSizeOverride("font_size", 18);
         _graphics.AddItem("Высокая");
         _graphics.AddItem("Низкая (быстрее)");
+        _graphics.AddItem("Ультра");
         _graphics.ItemSelected += index =>
         {
             Settings.Current.Graphics = (GraphicsQuality)index;
@@ -68,6 +69,9 @@ public partial class SettingsMenu : CanvasLayer
         _shake = CreateToggle(column, "Тряска камеры", on => Settings.Current.CameraShake = on);
 
         column.AddChild(new Control { CustomMinimumSize = new Vector2(0f, 10f) });
+        var keys = new KeyBindPanel { Name = "KeyBindPanel" };
+        AddChild(keys);
+        column.AddChild(Ui.CreateButton("Управление", keys.Open));
         column.AddChild(Ui.CreateButton("Назад", Close));
     }
 

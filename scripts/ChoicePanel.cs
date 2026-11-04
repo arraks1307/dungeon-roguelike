@@ -22,7 +22,7 @@ public partial class ChoicePanel : CanvasLayer
         _title = Ui.CreateLabel(38);
         _title.HorizontalAlignment = HorizontalAlignment.Center;
         column.AddChild(_title);
-        _text = Ui.CreateWrappedLabel(18, 560f);
+        _text = Ui.CreateWrappedLabel(18, 760f);
         _text.HorizontalAlignment = HorizontalAlignment.Center;
         column.AddChild(_text);
         _options = new VBoxContainer();
@@ -30,7 +30,7 @@ public partial class ChoicePanel : CanvasLayer
         column.AddChild(_options);
     }
 
-    public void Open(string title, string text, List<string> options)
+    public void Open(string title, string text, List<string> options, string leaveText = "Пройти мимо")
     {
         _title.Text = title;
         _text.Text = text;
@@ -45,12 +45,13 @@ public partial class ChoicePanel : CanvasLayer
         {
             int index = i;
             var button = Ui.CreateButton(options[i], () => Chosen?.Invoke(index));
-            button.CustomMinimumSize = new Vector2(560f, 54f);
+            button.CustomMinimumSize = new Vector2(760f, 54f);
+            button.AutowrapMode = TextServer.AutowrapMode.WordSmart;
             _options.AddChild(button);
             first ??= button;
         }
-        var leave = Ui.CreateButton("Пройти мимо", () => Cancelled?.Invoke());
-        leave.CustomMinimumSize = new Vector2(560f, 46f);
+        var leave = Ui.CreateButton(leaveText, () => Cancelled?.Invoke());
+        leave.CustomMinimumSize = new Vector2(760f, 46f);
         _options.AddChild(leave);
         first ??= leave;
 

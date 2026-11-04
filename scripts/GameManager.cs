@@ -16,6 +16,8 @@ public enum GameState
     GameOver,
     Chat,      // пишем сообщение отряду: клавиши идут в строку чата, а не герою
     Event,     // открыто окно события (странник)
+    Camp,      // герой ходит по лагерю
+    CampDialog, // в лагере открыт разговор или доска памяти
 }
 
 /// <summary>Кто входит в отряд: класс, имя и (для самопроверки) управляет ли героем автопилот.</summary>
@@ -43,6 +45,8 @@ public partial class GameManager : Node3D, IGameWorld
     public const int MaxPartySize = 4;
 
     private const int BossFloorInterval = 5;
+    private const int MaxCrit = 60;      // шанс крита и лечение за удар ограничены: иначе сборки ломают бой
+    private const int MaxLifesteal = 6;
     private const int MapWidth = 48;
     private const int MapHeight = 32;
     private const int FovRadius = 8;
@@ -137,6 +141,7 @@ public partial class GameManager : Node3D, IGameWorld
 
         int damage = ApplyGuard(target, (int)MathF.Round(RollDamage(enemy, target) * power), ranged);
         target.TakeDamage(damage);
+        Effects.Flash(this, target.GridPos, DamageColor, 1.6f);
         if (IsInvulnerable)
             target.Heal(damage);
         Effects.FloatingText(this, target.GridPos, $"-{damage}", DamageColor);
@@ -234,11 +239,11 @@ public partial class GameManager : Node3D, IGameWorld
 
         _classSelect = new ClassSelectPanel();
         AddChild(_classSelect);
-        _classSelect.ClassChosen += StartNewGame;
+        _classSelect.ClassChosen += OnClassChosen;
 
         _mainMenu = new MainMenu();
         AddChild(_mainMenu);
-        _mainMenu.NewGameRequested += OpenClassSelect;
+        _mainMenu.NewGameRequested += OpenWorlds;
         _mainMenu.ContinueRequested += ContinueGame;
         _mainMenu.SettingsRequested += OpenSettings;
         _mainMenu.NetworkRequested += OpenLobby;
@@ -258,6 +263,7 @@ public partial class GameManager : Node3D, IGameWorld
         SetupTutorial();
         SetupWorldEvents();
         SetupMeta();
+        SetupWorlds();
         ShowMainMenu();
         if (!IsTestRun && DisplayServer.GetName() != "headless")
             _sound.StartBackground();
@@ -308,10 +314,20 @@ public partial class GameManager : Node3D, IGameWorld
             return;
         }
 
+        var bound = KeyBindings.Find(key.PhysicalKeycode);
         switch (key.PhysicalKeycode)
         {
             case Key.Escape when _legacyPanel.Visible:
                 CloseLegacy();
+                break;
+            case Key.Escape when _worldPanel.Visible:
+                CloseWorlds();
+                break;
+            case Key.Escape when _worldCreatePanel.Visible:
+                CloseWorldCreate();
+                break;
+            case Key.Escape when _heroBuildPanel.Visible:
+                CloseHeroBuild();
                 break;
             case Key.Escape when _tutorialPanel.Visible:
                 _tutorialPanel.Cancel();
@@ -334,10 +350,10 @@ public partial class GameManager : Node3D, IGameWorld
             case Key.Enter or Key.KpEnter when _state == GameState.Playing && _isNetworkGame:
                 OpenChat();
                 break;
-            case Key.F when _state == GameState.Playing:
+            case var _ when bound == GameKey.Skill1 && _state == GameState.Playing:
                 PerformLocalAction(HeroAction.Skill(0));
                 break;
-            case Key.G when _state == GameState.Playing:
+            case var _ when bound == GameKey.Skill2 && _state == GameState.Playing:
                 PerformLocalAction(HeroAction.Skill(1));
                 break;
             case Key.Escape:
@@ -353,37 +369,43 @@ public partial class GameManager : Node3D, IGameWorld
                         break;
                     case GameState.Chat: CloseChat(); break;
                     case GameState.Event: CloseChoice(); break;
-                    case GameState.GameOver: ShowMainMenu(); break;
+                    case GameState.Camp: CloseWorld(); break;
+                    case GameState.CampDialog: CloseCampDialog(); break;
+                    case GameState.GameOver: GoHome(); break;
                 }
                 break;
-            case Key.I when _state == GameState.Playing:
+            case var _ when bound == GameKey.Inventory && _state == GameState.Playing:
                 OpenInventory();
                 break;
-            case Key.I when _state == GameState.Inventory:
+            case var _ when bound == GameKey.Inventory && _state == GameState.Inventory:
                 CloseInventory();
                 break;
-            case Key.T when _state == GameState.Inventory:
+            case var _ when bound == GameKey.GiveItem && _state == GameState.Inventory:
                 SubmitLocalAction(HeroAction.GiveItem(_inventoryPanel.FocusedIndex));
                 break;
-            case Key.Y when _state == GameState.Inventory:
+            case var _ when bound == GameKey.GiveGold && _state == GameState.Inventory:
                 SubmitLocalAction(HeroAction.GiveGold);
                 break;
             case >= Key.Key6 and <= Key.Key8 when _state == GameState.Playing && _isNetworkGame:
                 _net.SendChat(QuickPhrases[key.PhysicalKeycode - Key.Key6]);
                 break;
-            case Key.X when _state == GameState.Inventory:
+            case var _ when bound == GameKey.Drop && _state == GameState.Inventory:
                 SubmitLocalAction(HeroAction.Drop(_inventoryPanel.FocusedIndex));
                 break;
-            case >= Key.Key1 and <= Key.Key5 when _state == GameState.Playing:
-                QuickUse((int)(key.PhysicalKeycode - Key.Key1));
+            case var _ when bound >= GameKey.Slot1 && bound <= GameKey.Slot5 && _state == GameState.Playing:
+                QuickUse(bound.Value - GameKey.Slot1);
                 break;
             case Key.R when _state == GameState.GameOver:
                 if (_net.IsActive)
                     RestartNetworkRun();
+                else if (_worldLost)
+                    break; // мир удалён вечной смертью: остаётся только выйти в меню
+                else if (InWorld)
+                    StartDescent();
                 else
                     OfferTutorial(_partySpec[0].Class, null, () => StartRun(_partySpec, _difficulty)); // тем же составом и на той же сложности
                 break;
-            case Key.M when _state == GameState.Playing:
+            case var _ when bound == GameKey.Minimap && _state == GameState.Playing:
                 _hud.ToggleMinimap();
                 break;
             default:
@@ -461,7 +483,9 @@ public partial class GameManager : Node3D, IGameWorld
     /// <summary>Главное меню поверх случайного подземелья-заставки.</summary>
     private void ShowMainMenu()
     {
+        LeaveCamp();
         LeaveNetwork(); // из сетевой игры выход в меню — это выход из отряда
+        _hud.HideGameOver();
         _sound.SetBattle(false);
         if (!_metaLocked)
             Profile.Save(); // новые записи бестиария
@@ -509,6 +533,7 @@ public partial class GameManager : Node3D, IGameWorld
     {
         _isNetworkGame = false;
         _classSelect.Visible = false;
+        Profile.Current.LastClass = Array.IndexOf(ClassCatalog.All, playerClass);
         OfferTutorial(playerClass, null, () => StartRun(new List<HeroSpec> { new(playerClass) }, difficulty));
     }
 
@@ -538,12 +563,15 @@ public partial class GameManager : Node3D, IGameWorld
                 hero.Inventory.TryAdd(new Item(ItemCatalog.HealthPotion));
         if (!_isNetworkGame && !_metaLocked)
             ApplyLegacy(_localHero);
+        if (InWorld)
+            ApplyWorldBuild(_localHero);
         UiTheme.SetAccent(_localHero.Class.Color.Lightened(0.15f)); // интерфейс окрашивается в цвет своего героя
 
         NextFloor();
         string who = IsSinglePlayer ? $"{_localHero.Class.Name} спускается" : $"Отряд из {_heroes.Count} героев спускается";
         _hud.AddMessage($"{who} в подземелье.", InfoColor);
         TryShowLevelUp(); // бонус «Мудрость» даёт улучшение сразу на старте
+        ShowIntro();
     }
 
     private void Pause()
@@ -561,7 +589,7 @@ public partial class GameManager : Node3D, IGameWorld
     private void SaveAndExit()
     {
         SaveRun();
-        ShowMainMenu();
+        GoHome();
     }
 
     /// <summary>Настройки открываются и из главного меню, и из паузы; на время прячем меню под ними.</summary>
@@ -602,6 +630,7 @@ public partial class GameManager : Node3D, IGameWorld
     private void GameOver(string killerName)
     {
         _gameOver = true;
+        _worldLost = InWorld && Worlds.Current.Permadeath;
         _state = GameState.GameOver;
         if (_isNetworkGame)
             SaveSystem.DeleteNetwork();
@@ -613,16 +642,15 @@ public partial class GameManager : Node3D, IGameWorld
         _camera.Shake(0.4f);
 
         string title = IsSinglePlayer ? $"Ты погиб на этаже {_floor}" : $"Отряд погиб на этаже {_floor}";
-        _hud.ShowGameOver(
-            $"{title}\n" +
-            $"Последний удар: {killerName}\n" +
-            $"Побеждено врагов: {_kills}   Золото: {_localHero.Gold}\n" +
-            RecordScore() + PartySummary() + FinishRun() + "\n" +
-            RestartHint);
+        ShowRunSummary(false, title, $"Последний удар: {killerName}\n{Story.DeathLine(_floor)}",
+            RecordScore() + PartySummary() + FinishRun());
+        LoseWorldIfNeeded();
     }
 
     private string RestartHint => _isNetworkGame && !_net.IsHost
         ? "Новый забег начинает хост  •  Esc — в главное меню"
+        : _worldLost ? "Мир потерян вместе с героем  •  Esc — в главное меню"
+        : InWorld ? "R — новый спуск  •  Esc — в лагерь"
         : "R — начать заново  •  Esc — в главное меню";
 
     /// <summary>
@@ -656,16 +684,12 @@ public partial class GameManager : Node3D, IGameWorld
         _sound.Play(Sound.LevelUp);
         _camera.Shake(0.5f);
 
-        string heroes = IsSinglePlayer
-            ? $"{_localHero.Class.Name} {_localHero.Level}-го уровня"
-            : string.Join(", ", _heroes.Select(hero => $"{hero.DisplayName} ({hero.Level} ур.)"));
-        _hud.ShowGameOver(
-            "ПОБЕДА!\n\n" +
-            "Владыка бездны повержен, и подземелье затихает.\n" +
-            $"{heroes}, сложность: {_difficulty.Name.ToLower()}\n" +
-            $"Побеждено врагов: {_kills}   Золото: {_localHero.Gold}   Ходов: {_turns}\n" +
-            RecordScore() + PartySummary() + FinishRun() + "\n" +
-            RestartHint);
+        // Истинный финал: найдены все записи, и никто из отряда не заключил ни одной сделки
+        bool trueEnding = UsesProfile && Profile.Current.Notes.Count >= Story.Notes.Length && _heroes.All(hero => hero.Pacts.Count == 0);
+        if (trueEnding)
+            Deed("trueending");
+        ShowRunSummary(true, trueEnding ? "ИСТИННЫЙ ФИНАЛ" : "ПОБЕДА!", trueEnding ? Story.TrueEnding : Story.Ending,
+            RecordScore() + PartySummary() + FinishRun());
     }
 
     /// <summary>Записывает результат в таблицу рекордов и возвращает строку о месте в ней (только одиночная игра).</summary>
@@ -686,13 +710,15 @@ public partial class GameManager : Node3D, IGameWorld
     private void NextFloor()
     {
         _floor++;
+        if (_localHero != null)
+            CheckFloorDeeds();
         _descentRequested = false;
         _roundActions = 0;
         ClearLevelObjects();
 
         bool bossFloor = _floor % BossFloorInterval == 0;
         int themeIndex = Themes.IndexFor(_floor);
-        _map = DungeonGenerator.Generate(MapWidth, MapHeight, _rng, themeIndex, withBossRoom: bossFloor);
+        _map = DungeonGenerator.Generate(MapWidth, MapHeight, LayoutRandom, themeIndex, withBossRoom: bossFloor);
         _renderer.Build(_map);
         ApplyTheme();
 
@@ -718,6 +744,7 @@ public partial class GameManager : Node3D, IGameWorld
         SpawnEnemies(bossFloor ? enemyCount / 2 : enemyCount);
         SpawnChests();
         SpawnShrines();
+        SpawnStoryShrines(bossFloor);
         SpawnPlates();
         SpawnItems(_rng.Next(3, 6) + _difficulty.ItemsPerFloor + (_heroes.Count - 1));
         SpawnGold(_rng.Next(2, 5) + (_heroes.Count - 1));
@@ -736,6 +763,8 @@ public partial class GameManager : Node3D, IGameWorld
             _hud.AddMessage("Здесь, в глубине, ждёт Владыка бездны. Победи его — и подземелье будет пройдено!", DamageColor);
         else if (bossFloor)
             _hud.AddMessage($"Ты чувствуешь присутствие чего-то огромного... Здесь {_boss.DisplayName}. Лестница откроется после победы.", DamageColor);
+        if (_boss != null && Story.BossLine(_boss.Type.Name).Length > 0)
+            _hud.AddMessage(Story.BossLine(_boss.Type.Name), Story.Tint);
         else if (_floor == 1 || Themes.IndexFor(_floor - 1) != themeIndex)
             _hud.AddMessage($"Этаж {_floor}: {_map.Theme.Name}.", InfoColor);
         else
@@ -766,7 +795,7 @@ public partial class GameManager : Node3D, IGameWorld
             blocker.QueueFree();
         }
 
-        _boss = SpawnEnemy(Enemy.BossForFloor(_floor), cell);
+        _boss = SpawnEnemy(Enemy.BossForFloor(_floor, FinalFloor), cell);
     }
 
     private void ClearLevelObjects()
@@ -1011,15 +1040,19 @@ public partial class GameManager : Node3D, IGameWorld
         hero.ChargeSkills();
         var bonuses = hero.Bonuses;
         int damage = RollDamage(hero, enemy) + bonuses.FireDamage + PerkBonusDamage(hero, enemy);
-        bool crit = _rng.Next(100) < bonuses.Crit;
+        bool crit = _rng.Next(100) < Math.Min(bonuses.Crit, MaxCrit);
         if (crit)
             damage *= 2;
         damage = ApplyTeamwork(hero, enemy, damage);
         hero.DamageDealt += damage;
+        NoteHit(hero, damage);
 
         enemy.TakeDamage(damage);
         Effects.FloatingText(this, enemy.GridPos, crit ? $"{damage}!" : damage.ToString(), crit ? CritColor : Colors.White);
         Effects.Burst(this, enemy.GridPos, bonuses.FireDamage > 0 ? new Color(1f, 0.5f, 0.1f) : enemy.Type.Color, crit ? 16 : 8);
+        Effects.Slash(this, enemy.GridPos, crit ? CritColor : hero.Class.Color.Lightened(0.4f));
+        if (crit || bonuses.FireDamage > 0)
+            Effects.Flash(this, enemy.GridPos, crit ? CritColor : new Color(1f, 0.5f, 0.1f));
         _sound.Play(Sound.Hit);
         if (crit && IsLocalHero(hero))
             _camera.Shake(0.08f);
@@ -1028,11 +1061,12 @@ public partial class GameManager : Node3D, IGameWorld
         if (bonuses.Lifesteal > 0 && hero.IsHurt)
         {
             int before = hero.Hp;
-            hero.Heal(bonuses.Lifesteal);
+            hero.Heal(Math.Min(bonuses.Lifesteal, MaxLifesteal));
             Effects.FloatingText(this, hero.GridPos, $"+{hero.Hp - before}", GoodColor);
         }
 
         ApplyMeleePerks(hero, enemy, damage);
+        ApplyWeaponRules(hero, enemy, damage);
         if (enemy.IsDead)
             KillEnemy(enemy);
         else
@@ -1051,7 +1085,10 @@ public partial class GameManager : Node3D, IGameWorld
         _enemies.Remove(enemy);
         enemy.Die();
         _kills++;
+        if (enemy.IsBoss)
+            OnBossKilled();
         Effects.Burst(this, enemy.GridPos, enemy.Type.Color, enemy.IsBoss ? 60 : 20);
+        Effects.Stain(this, enemy.GridPos, enemy.Type.Color);
         _sound.Play(Sound.Kill);
 
         // Опыт — раньше проверки босса: иначе экран победы показал бы уровень без опыта за финального босса
@@ -1096,9 +1133,8 @@ public partial class GameManager : Node3D, IGameWorld
 
         // Награда: предмет как будто с более глубокого этажа и золото каждому живому герою
         // Не _localHero: у каждого компьютера свой «свой» герой, а мир должен получиться одинаковым
-        var dropCell = boss.GridPos == stairs ? LivingHeroes.First().GridPos : boss.GridPos;
-        if (!_floorItems.ContainsKey(dropCell))
-            PlaceItem(ItemCatalog.RollLegendary(_rng), dropCell); // босс всегда оставляет легендарную вещь
+        PlaceBossReward(boss, stairs); // босс оставляет реликварий с выбором из легендарных вещей
+
         int gold = 50 + _floor * 10;
         foreach (var hero in LivingHeroes)
             hero.Gold += gold;
@@ -1131,7 +1167,8 @@ public partial class GameManager : Node3D, IGameWorld
 
     private void SpawnEnemies(int count)
     {
-        var available = Enemy.Types.Where(type => type.MinFloor <= _floor).ToArray();
+        // Жнец появляется только после первой победы, и только в одиночной игре
+        var available = Enemy.Types.Where(type => type.MinFloor <= _floor && (type.Name != "Жнец" || (UsesProfile && Profile.Has("win")))).ToArray();
         for (int i = 0; i < count; i++)
         {
             if (!TryFindFreeCell(out var cell))
@@ -1146,7 +1183,7 @@ public partial class GameManager : Node3D, IGameWorld
     {
         var enemy = new Enemy();
         float weight = ExtraHeroWeight;
-        enemy.Setup(type, _floor, _difficulty, 1f + _partyHpPerHero * weight, 1f + _partyDamagePerHero * weight);
+        enemy.Setup(type, _floor, _difficulty, (1f + _partyHpPerHero * weight) * PactEnemyHp, (1f + _partyDamagePerHero * weight) * PactEnemyDamage);
         AddChild(enemy);
         enemy.Teleport(cell);
         enemy.Visible = _visible.Contains(cell);

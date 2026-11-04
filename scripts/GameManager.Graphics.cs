@@ -24,24 +24,35 @@ public partial class GameManager
             AmbientLightSource = Godot.Environment.AmbientSource.Color,
             AmbientLightColor = new Color(0.35f, 0.4f, 0.6f),
             AmbientLightEnergy = 0.5f,
-            TonemapMode = Godot.Environment.ToneMapper.Filmic,
-            TonemapExposure = 1.05f,
+            // ACES — кинематографичная кривая: яркое не выгорает в белое, а тени остаются глубокими
+            TonemapMode = Godot.Environment.ToneMapper.Aces,
+            TonemapExposure = 1.9f,
+            TonemapWhite = 5f,
 
             GlowEnabled = true,
-            GlowIntensity = 0.9f,
-            GlowBloom = 0.04f,
-            GlowHdrThreshold = 0.9f,
+            GlowIntensity = 0.5f,
+            GlowStrength = 1.1f,
+            GlowBloom = 0.06f,
+            GlowHdrThreshold = 1f,
+            GlowBlendMode = Godot.Environment.GlowBlendModeEnum.Screen,
+
+            // Отражения на мокром камне и отражённый свет: включаются на Ультра
+            SsrMaxSteps = 48,
+            SsrFadeOut = 2f,
+            SsrDepthTolerance = 0.4f,
+            SsilRadius = 4f,
+            SsilIntensity = 1.4f,
 
             SsaoRadius = 1.2f,
             SsaoIntensity = 2.2f,
 
-            VolumetricFogDensity = 0.018f,
+            VolumetricFogDensity = 0.026f,
             VolumetricFogAnisotropy = 0.4f, // свет рассеивается больше «вперёд» — ореолы мягче
             VolumetricFogLength = 40f,
 
             AdjustmentEnabled = true,
-            AdjustmentContrast = 1.06f,
-            AdjustmentSaturation = 1.1f,
+            AdjustmentContrast = 1.1f,
+            AdjustmentSaturation = 1.15f,
         };
         AddChild(new WorldEnvironment { Environment = _environment });
 
@@ -55,7 +66,11 @@ public partial class GameManager
         bool high = Settings.HighQuality;
         _environment.SsaoEnabled = high;
         _environment.VolumetricFogEnabled = high;
-        GetViewport().Msaa3D = high ? Viewport.Msaa.Msaa2X : Viewport.Msaa.Disabled;
+        bool ultra = Settings.UltraQuality;
+        _environment.SsrEnabled = ultra;
+        _environment.SsilEnabled = ultra;
+        GetViewport().Msaa3D = ultra ? Viewport.Msaa.Msaa4X : high ? Viewport.Msaa.Msaa2X : Viewport.Msaa.Disabled;
+        GetViewport().ScreenSpaceAA = high ? Viewport.ScreenSpaceAAEnum.Fxaa : Viewport.ScreenSpaceAAEnum.Disabled; // сглаживает тонкие травинки
         foreach (var hero in _heroes)
             hero.SetHighQuality(high);
     }

@@ -40,8 +40,12 @@ public partial class Enemy : Actor
     private const int GhostSenseRadius = 6;
     private const int BossSummonInterval = 5;
 
-    // Рост врагов с глубиной: +HpPerFloor здоровья за этаж и +1 атаки каждые AttackFloorStep этажей
-    public const int HpPerFloor = 2;
+    // Рост врагов с глубиной. Сила героя растёт быстрее прямой: уровни, вещи, наборы и сделки складываются.
+    // Поэтому к прежней прибавке добавлен рост в процентах от базы: сильные виды крепнут заметнее слабых
+    public const float HpGrowth = 0.13f;      // +13% базового здоровья за этаж
+    public const float AttackGrowth = 0.06f;  // +6% базовой атаки за этаж
+    public const float BossHpScale = 1.7f;    // боссы должны переживать несколько раундов
+    public const int HpPerFloor = 2; // плюс ровная прибавка за этаж
     public const int AttackFloorStep = 3;
 
     public static readonly EnemyType[] Types =
@@ -56,6 +60,7 @@ public partial class Enemy : Actor
         new("Щитоносец", 14, 4, 1, new Color(0.55f, 0.6f, 0.75f), EnemyShape.Box, EnemyBehavior.Shieldbearer, Slow: false, MinFloor: 3),
         new("Громила", 24, 6, 1, new Color(0.5f, 0.35f, 0.6f), EnemyShape.Box, EnemyBehavior.Brute, Slow: false, MinFloor: 4),
         new("Шаман", 12, 3, 0, new Color(0.3f, 0.9f, 0.6f), EnemyShape.Cone, EnemyBehavior.Shaman, Slow: false, MinFloor: 5),
+        new("Жнец", 30, 8, 2, new Color(0.25f, 0.28f, 0.3f), EnemyShape.Capsule, EnemyBehavior.Melee, Slow: false, MinFloor: 7),
         // Мимик сам по этажам не бродит (MinFloor 99) — он появляется только из сундука
         new("Мимик", 20, 6, 1, new Color(0.55f, 0.33f, 0.14f), EnemyShape.Box, EnemyBehavior.Melee, Slow: false, MinFloor: 99),
     };
@@ -71,7 +76,9 @@ public partial class Enemy : Actor
     };
 
     /// <summary>Босс этажа: 5 — Король орков, 10 — Некромант, 15 — Владыка бездны.</summary>
-    public static EnemyType BossForFloor(int floor) => Bosses[Math.Clamp(floor / 5 - 1, 0, Bosses.Length - 1)];
+    /// <summary>На последнем этаже мира всегда финальный босс, до него только обычные.</summary>
+    public static EnemyType BossForFloor(int floor, int finalFloor = 15) =>
+        floor >= finalFloor ? Bosses[^1] : Bosses[Math.Clamp(floor / 5 - 1, 0, Bosses.Length - 2)];
 
     /// <summary>Что враг умеет — для подсказки при наведении и бестиария.</summary>
     public static string Describe(EnemyType type) => type.Behavior switch
@@ -196,48 +203,29 @@ public partial class Enemy : Actor
         Type = type;
         DisplayName = type.Name;
         // С каждым этажом враги немного крепче, а сложность и размер отряда умножают здоровье
-        MaxHp = Mathf.RoundToInt((type.Hp + (floor - 1) * HpPerFloor) * difficulty.EnemyHp * partyHpScale);
+        float hp = type.Hp * (1f + HpGrowth * (floor - 1)) + (floor - 1) * HpPerFloor;
+        MaxHp = Mathf.RoundToInt(hp * difficulty.EnemyHp * partyHpScale * (IsBoss ? BossHpScale : 1f));
         Hp = MaxHp;
-        Attack = Math.Max(1, Mathf.RoundToInt((type.Attack + (floor - 1) / AttackFloorStep) * difficulty.EnemyDamage * partyDamageScale));
+        float attack = type.Attack * (1f + AttackGrowth * (floor - 1)) + (floor - 1) / AttackFloorStep;
+        Attack = Math.Max(1, Mathf.RoundToInt(attack * difficulty.EnemyDamage * partyDamageScale));
         Defense = type.Defense;
 
         if (IsBoss)
         {
-            CreateBossBody(type);
-            CreateHealthBar(type.Behavior == EnemyBehavior.Overlord ? 2.1f : 1.75f);
+            switch (type.Behavior)
+            {
+                case EnemyBehavior.Necromancer: BuildNecromancer(type); break;
+                case EnemyBehavior.Overlord: BuildOverlord(type); break;
+                default: BuildOrcKing(type); break;
+            }
+            CreateHealthBar(type.Behavior == EnemyBehavior.Overlord ? 2.8f : 2.15f);
             return;
         }
 
-        CreateHealthBar(1.05f);
-
-        switch (type.Shape)
-        {
-            case EnemyShape.Sphere:
-                CreateBody(new SphereMesh { Radius = 0.3f, Height = 0.45f }, type.Color, 0.22f);
-                break;
-            case EnemyShape.Capsule:
-                CreateBody(new CapsuleMesh { Radius = 0.2f, Height = 0.7f }, type.Color, 0.35f);
-                break;
-            case EnemyShape.Box:
-                CreateBody(new BoxMesh { Size = new Vector3(0.6f, 0.8f, 0.6f) }, type.Color, 0.4f);
-                break;
-            case EnemyShape.Cone:
-                CreateBody(new CylinderMesh { TopRadius = 0.05f, BottomRadius = 0.28f, Height = 0.8f }, type.Color, 0.4f);
-                break;
-        }
-
-        AddEyes(type);
-        if (type.Behavior == EnemyBehavior.Ghost)
-            MakeTranslucent(0.45f);
+        CreateHealthBar(type.Shape == EnemyShape.Box ? 1.4f : 1.1f);
+        BuildModel(type);
         if (type.Behavior == EnemyBehavior.Shieldbearer)
             CreateShield();
-    }
-
-    private void CreateShield()
-    {
-        _shield = Part(new BoxMesh { Size = new Vector3(0.62f, 0.72f, 0.08f) }, new Color(0.8f, 0.85f, 0.95f), new Vector3(0f, 0.02f, 0.4f), glow: 0.3f);
-        Body.AddChild(_shield); // на теле: поворачивается вместе с ним
-        SetShield(true);
     }
 
     private void SetShield(bool up)
@@ -285,77 +273,6 @@ public partial class Enemy : Actor
         _fuseLit = false;
         _slamReady = false;
         ClearWarning();
-    }
-
-    /// <summary>
-    /// Светящиеся глаза на «лицевой» стороне (+Z — сторона, обращённая к камере).
-    /// Даже простая фигура с глазами читается как существо, а в темноте глаза видны первыми.
-    /// </summary>
-    private void AddEyes(EnemyType type)
-    {
-        // Положение глаз относительно центра тела зависит от формы: (половина расстояния между глазами, высота, глубина)
-        var (spread, height, depth) = type.Shape switch
-        {
-            EnemyShape.Sphere => (0.09f, 0.06f, 0.26f),
-            EnemyShape.Box => (0.13f, 0.2f, 0.31f),
-            EnemyShape.Cone => (0.05f, 0.12f, 0.16f),
-            _ => (0.07f, 0.2f, 0.18f),
-        };
-        var color = type.Name switch
-        {
-            "Орк" or "Мимик" => new Color(1f, 0.35f, 0.2f),
-            "Призрак" => new Color(0.55f, 0.9f, 1f),
-            "Скелет" => new Color(0.4f, 1f, 0.6f),
-            _ => new Color(1f, 0.95f, 0.75f),
-        };
-        foreach (float side in new[] { -1f, 1f })
-            Body.AddChild(Part(new SphereMesh { Radius = 0.04f, Height = 0.08f }, color, new Vector3(side * spread, height, depth), glow: 2.5f));
-    }
-
-    /// <summary>У каждого босса свой силуэт, чтобы его сразу можно было узнать.</summary>
-    private void CreateBossBody(EnemyType type)
-    {
-        var gold = new Color(1f, 0.8f, 0.3f);
-        switch (type.Behavior)
-        {
-            case EnemyBehavior.Necromancer:
-                // Высокая мантия, череп и светящийся посох
-                CreateBody(new CylinderMesh { TopRadius = 0.12f, BottomRadius = 0.4f, Height = 1.3f }, type.Color, 0.65f);
-                Body.AddChild(Glowing(new SphereMesh { Radius = 0.17f, Height = 0.34f }, new Color(0.9f, 0.88f, 0.8f), 0.2f, new Vector3(0f, 0.78f, 0f)));
-                Body.AddChild(Glowing(new BoxMesh { Size = new Vector3(0.05f, 1.4f, 0.05f) }, new Color(0.3f, 0.2f, 0.1f), 0f, new Vector3(0.42f, 0.1f, 0f)));
-                Body.AddChild(Glowing(new SphereMesh { Radius = 0.1f, Height = 0.2f }, new Color(0.6f, 1f, 0.5f), 2.5f, new Vector3(0.42f, 0.85f, 0f)));
-                break;
-
-            case EnemyBehavior.Overlord:
-                // Огромная тёмная глыба с рогами и раскалёнными глазами
-                CreateBody(new BoxMesh { Size = new Vector3(1.1f, 1.6f, 1f) }, type.Color, 0.8f);
-                var red = new Color(1f, 0.15f, 0.05f);
-                Body.AddChild(Glowing(new CylinderMesh { TopRadius = 0f, BottomRadius = 0.12f, Height = 0.45f }, new Color(0.15f, 0.12f, 0.1f), 0f, new Vector3(-0.35f, 1f, 0f)));
-                Body.AddChild(Glowing(new CylinderMesh { TopRadius = 0f, BottomRadius = 0.12f, Height = 0.45f }, new Color(0.15f, 0.12f, 0.1f), 0f, new Vector3(0.35f, 1f, 0f)));
-                Body.AddChild(Glowing(new SphereMesh { Radius = 0.08f, Height = 0.16f }, red, 4f, new Vector3(-0.22f, 0.45f, 0.5f)));
-                Body.AddChild(Glowing(new SphereMesh { Radius = 0.08f, Height = 0.16f }, red, 4f, new Vector3(0.22f, 0.45f, 0.5f)));
-                AddChild(new OmniLight3D { LightColor = red, LightEnergy = 1.5f, OmniRange = 4f, Position = new Vector3(0f, 1.2f, 0f) });
-                break;
-
-            default:
-                // Король орков: здоровяк в золотой короне
-                CreateBody(new BoxMesh { Size = new Vector3(0.9f, 1.3f, 0.9f) }, type.Color, 0.65f);
-                Body.AddChild(Glowing(new CylinderMesh { TopRadius = 0.35f, BottomRadius = 0.3f, Height = 0.2f }, gold, 0.6f, new Vector3(0f, 0.75f, 0f)));
-                break;
-        }
-    }
-
-    private static MeshInstance3D Glowing(PrimitiveMesh mesh, Color color, float glow, Vector3 position)
-    {
-        var material = new StandardMaterial3D { AlbedoColor = color };
-        if (glow > 0f)
-        {
-            material.EmissionEnabled = true;
-            material.Emission = color;
-            material.EmissionEnergyMultiplier = glow;
-        }
-        mesh.Material = material;
-        return new MeshInstance3D { Mesh = mesh, Position = position };
     }
 
     /// <summary>Медленные враги действуют через ход.</summary>

@@ -1,3 +1,4 @@
+using System.Linq;
 using System;
 using System.Collections.Generic;
 using Godot;
@@ -79,7 +80,7 @@ public partial class InventoryPanel : CanvasLayer
         detailsColumn.AddChild(_details);
 
         column.AddChild(Ui.CreateMutedLabel(14,
-            "Стрелки / мышь — выбор  •  Enter / клик — использовать  •  X — выбросить  •  I / Esc — закрыть"));
+            "Стрелки / мышь — выбор  •  Enter / клик — использовать  •  Esc — закрыть  •  клавиши меняются в настройках"));
     }
 
     /// <summary>
@@ -134,7 +135,8 @@ public partial class InventoryPanel : CanvasLayer
     {
         _player = player;
         var inventory = player.Inventory;
-        _goldLabel.Text = $"Золото: {player.Gold}     Сумка: {inventory.Items.Count}/{Inventory.Capacity}";
+        var sets = inventory.WornSets.Select(set => $"{set.Name} {inventory.SetCount(set)}/{set.Size}");
+        _goldLabel.Text = $"Золото: {player.Gold}     Сумка: {inventory.Items.Count}/{Inventory.Capacity}     {string.Join("   ", sets)}";
 
         RefreshEquipment(inventory);
 
@@ -216,7 +218,7 @@ public partial class InventoryPanel : CanvasLayer
             _details.Text = $"[color=#{UiTheme.TextMuted.ToHtml(false)}]Пусто. Выбери предмет, чтобы увидеть описание.[/color]";
             return;
         }
-        _detailIcon.Texture = ItemIcons.Get(item, 72); // 72 = 24 × 3: пиксели увеличиваются ровно
+        _detailIcon.Texture = ItemIcons.Get(item, 72);
         bool inBag = _player.Inventory.Items.Contains(item);
         _details.Text = ItemInfo.Describe(item, _player.Inventory, inBag ? ItemInfo.ActionHint(item) : null);
     }

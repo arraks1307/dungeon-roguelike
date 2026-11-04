@@ -115,6 +115,7 @@ public partial class GameManager
                     "mage" => ClassCatalog.Mage,
                     "priest" => ClassCatalog.Priest,
                     "rogue" => ClassCatalog.Rogue,
+                    "berserk" => ClassCatalog.Berserk,
                     _ => null,
                 };
             else if (arg.StartsWith("--difficulty="))
@@ -129,7 +130,12 @@ public partial class GameManager
             else if (arg.StartsWith("--simulate="))
                 _simulateGames = int.Parse(arg["--simulate=".Length..]);
             else if (arg.StartsWith("--graphics="))
-                _testGraphics = arg["--graphics=".Length..] == "low" ? GraphicsQuality.Low : GraphicsQuality.High;
+                _testGraphics = arg["--graphics=".Length..] switch
+                {
+                    "low" => GraphicsQuality.Low,
+                    "ultra" => GraphicsQuality.Ultra,
+                    _ => GraphicsQuality.High,
+                };
             else if (arg.StartsWith("--party="))
                 _testParty = System.Math.Clamp(int.Parse(arg["--party=".Length..]), 1, MaxPartySize);
             else if (arg.StartsWith("--sound-report="))
@@ -258,9 +264,48 @@ public partial class GameManager
                 if (loaded)
                     _localHero.IsBot = true; // дальше играет автопилот: забег должен продолжаться как обычно
             }
+            else if (_screenshotView == "camp")
+            {
+                foreach (var resident in Story.Residents.Take(3))
+                    Profile.Current.Rescued.Add(resident.Id); // только в памяти: профиль в проверке не сохраняется
+                EnterCamp();
+                RunCampTest();
+            }
+            else if (_screenshotView == "keys")
+            {
+                var before = KeyBindings.Get(GameKey.Skill1);
+                KeyBindings.Set(GameKey.Skill1, Key.G); // занято: должен получиться обмен
+                GD.Print($"Клавиши: способность 1 = {KeyBindings.Name(GameKey.Skill1)}, способность 2 = {KeyBindings.Name(GameKey.Skill2)}, J свободна {KeyBindings.Find(Key.J) == null}, Esc закреплён {KeyBindings.IsReserved(Key.Escape)}");
+                KeyBindings.Reset();
+                GD.Print($"Клавиши: после сброса {KeyBindings.Name(GameKey.Skill1)} (было {before})");
+                _mainMenu.Visible = false;
+                OpenSettings();
+                _settingsMenu.GetNode<KeyBindPanel>("KeyBindPanel").Open();
+            }
+            else if (_screenshotView == "worldflow")                RunWorldFlowTest();
+            else if (_screenshotView == "worldcreate")
+            {
+                _mainMenu.Visible = false;
+                _worldCreatePanel.Open();
+            }
+            else if (_screenshotView == "herobuild")
+            {
+                _mainMenu.Visible = false;
+                _heroBuildPanel.Open(new WorldInfo { Name = "Проверка", ClassIndex = 2, Points = new[] { 3, 1, 1, 0, 0, 2, 0 }, Trait = 2 });
+            }
+            else if (_screenshotView == "campexit")            {
+                // Настоящий путь: мир, лагерь, пещера, спуск
+                Worlds.Folder = "user://test_worlds";
+                var world = new WorldInfo { Name = "Спуск", Seed = 5, ClassIndex = 1, Descents = 1 };
+                Worlds.Create(world);
+                OpenWorld(world);
+                OpenCampStation(CampScene.Cave);
+                GD.Print($"Лагерь: спуск: герой {_localHero?.Class.Name}, этаж {_floor}, спусков {world.Descents}");
+                Worlds.Delete(world);
+                GD.Print($"Лагерь: выход: лагерь {InCamp}, состояние {_state}, выбор героя открыт {_classSelect.Visible}, виден мир {_renderer.Visible}");
+            }
             else if (_screenshotView == "connect")
-                OpenLobby();
-            else if (_screenshotView == "lobby")
+                OpenLobby();            else if (_screenshotView == "lobby")
             {
                 // Комната хоста (только на этом компьютере), состав — как будто друзья уже подключились
                 OpenLobby();
@@ -319,6 +364,66 @@ public partial class GameManager
         }
     }
 
+    /// <summary>Снимок: все виды врагов вокруг героя, у которого почти кончилось здоровье.</summary>
+    private void ShowEnemyGallery()
+    {
+        var hero = _localHero;
+        var cells = new Queue<Vector2I>(Enumerable.Range(-5, 11)
+            .SelectMany(x => Enumerable.Range(-5, 11).Select(y => hero.GridPos + new Vector2I(x, y)))
+            .Where(c => _map.Get(c) == Tile.Floor && !IsOccupied(c))
+            .OrderBy(c => (c - hero.GridPos).LengthSquared()));
+        foreach (var type in Enemy.Types)
+            if (cells.Count > 0)
+            {
+                var enemy = SpawnEnemy(type, cells.Dequeue());
+                Effects.Stain(this, enemy.GridPos, type.Color);
+            }
+        var boss = _enemies.FirstOrDefault(enemy => enemy.IsBoss);
+        if (boss != null && cells.Count > 0)
+            boss.Teleport(cells.Dequeue());
+        hero.TakeDamage(hero.Hp - 3);
+        UpdateFov();
+        UpdateHud();
+    }
+
+    /// <summary>Снимок: иконки всех предметов сеткой поверх игры.</summary>
+    private void ShowIconGallery()
+    {
+        var grid = new GridContainer { Columns = 12, Position = new Vector2(60f, 110f) };
+        grid.AddThemeConstantOverride("h_separation", 12);
+        grid.AddThemeConstantOverride("v_separation", 12);
+        foreach (var template in ItemCatalog.All.Concat(ItemCatalog.Legendaries).Concat(ItemCatalog.SetPieces))
+            grid.AddChild(new TextureRect { Texture = ItemIcons.Get(new Item(template), 96) });
+        var layer = new CanvasLayer { Layer = 50 };
+        layer.AddChild(new ColorRect { Color = new Color(0.1f, 0.1f, 0.13f), Size = new Vector2(1920f, 1080f) });
+        layer.AddChild(grid);
+        AddChild(layer);
+    }
+
+    /// <summary>Снимок: вещи, золото, сундук, алтарь и торговец рядом с героем.</summary>
+    private void ShowPropGallery()
+    {
+        var hero = _localHero;
+        var cells = new Queue<Vector2I>(Enumerable.Range(-5, 11)
+            .SelectMany(x => Enumerable.Range(-5, 11).Select(y => hero.GridPos + new Vector2I(x, y)))
+            .Where(c => _map.Get(c) == Tile.Floor && !IsOccupied(c) && c != hero.GridPos)
+            .OrderBy(c => (c - hero.GridPos).LengthSquared()));
+        AddChild(Chest.Create(cells.Dequeue(), false, false));
+        AddChild(Shrine.Create(cells.Dequeue(), default));
+        AddChild(Merchant.Create(cells.Dequeue(), new List<Item>()));
+        AddPickup(ItemPickup.CreateGold(10, cells.Peek()), cells.Dequeue());
+        foreach (var kind in System.Enum.GetValues<ItemKind>())
+        {
+            Item item = null;
+            for (int i = 0; i < 400 && item?.Kind != kind; i++)
+                item = ItemCatalog.Roll(_rng, 12);
+            if (item?.Kind == kind && cells.Count > 0)
+                AddPickup(ItemPickup.Create(item, cells.Peek()), cells.Dequeue());
+        }
+        UpdateFov();
+        UpdateHud();
+    }
+
     private void OpenTestView()
     {
         switch (_screenshotView)
@@ -340,6 +445,30 @@ public partial class GameManager
                 break;
             case "services":
                 RunServicesTest();
+                break;
+            case "enemies":
+                ShowEnemyGallery();
+                break;
+            case "equip":
+                _localHero.Inventory.TryAdd(new Item(ItemCatalog.SetPieces[0], Rarity.Set));
+                OpenInventory();
+                OnInventoryUse(_localHero.Inventory.Items.Count - 1);
+                GD.Print($"Экипировка: окно {_state}, видно {_inventoryPanel.Visible}, броня {_localHero.Inventory.GetEquipped(EquipSlot.Armor)?.Name}");
+                break;
+            case "summary":
+                _localHero.AddPact(Pacts.All[0]);
+                GameOver("Орк");
+                break;
+            case "story":
+                _state = GameState.Event; // в проверках герой под автопилотом, поэтому окно открываем напрямую
+                _choicePanel.Open("Тёмный алтарь", "Камень шепчет твоё имя. Сила останется с тобой до конца забега. Плата тоже.",
+                    new[] { 0, 2, 5 }.Select(id => $"{Pacts.All[id].Name}: {Pacts.All[id].Offer}").ToList());
+                break;
+            case "icons":
+                ShowIconGallery();
+                break;
+            case "props":
+                ShowPropGallery();
                 break;
             case "fade":
                 _hud.FadeFromBlack(); // снимок через 40 кадров покажет середину затемнения
@@ -497,10 +626,132 @@ public partial class GameManager
         PerformHeroAction(hero, HeroAction.Move(step));
     }
 
+    /// <summary>Наборы: бонус появляется со второй части, растёт с третьей и исчезает вместе с вещами.</summary>
+    private void RunSetTest(Player hero)
+    {
+        var pieces = ItemCatalog.SetPieces.Where(piece => piece.Set == ItemCatalog.GuardSet).ToArray();
+        var log = new List<string> { $"защита {hero.Defense}, здоровье {hero.MaxHp}" };
+        foreach (var piece in pieces)
+        {
+            hero.Inventory.Items.Clear();
+            hero.Inventory.TryAdd(new Item(piece, Rarity.Set));
+            hero.Equip(0);
+            log.Add($"{hero.Inventory.SetCount(ItemCatalog.GuardSet)} части: защита {hero.Defense}, здоровье {hero.MaxHp}, шипы {hero.Bonuses.Thorns}");
+        }
+        var restored = ItemSave.From(new Item(pieces[0], Rarity.Set)).ToItem();
+        GD.Print($"Набор: {string.Join(" → ", log)}; сохранение: {restored?.Name}, {restored?.Rarity}");
+    }
+
+    /// <summary>Мир: герой не меняется, этажи постоянны, прогресс раздельный, вечная смерть удаляет мир.</summary>
+    private void RunWorldFlowTest()
+    {
+        Worlds.Folder = "user://test_worlds";
+        foreach (var old in Worlds.LoadAll())
+            Worlds.Delete(old);
+
+        var first = new WorldInfo { Name = "Первый", Seed = 42, ClassIndex = 2, LengthIndex = 0, Points = new[] { 2, 1, 0, 0, 0, 1, 1 }, Trait = 2 };
+        var second = new WorldInfo { Name = "Второй", Seed = 43, Permadeath = true };
+        Worlds.Create(first);
+        System.Threading.Thread.Sleep(1100); // номер мира включает секунды
+        Worlds.Create(second);
+
+        Worlds.Select(first);
+        Profile.Current.Shards = 77;
+        Profile.Save();
+        int firstLayout = LayoutHash(5, first.Seed);
+        int repeat = LayoutHash(5, first.Seed);
+        OpenWorldForTest(first);
+        var hero = _localHero;
+        GD.Print($"Миры: герой {hero.Class.Name}, атака {hero.Attack}, защита {hero.Defense}, здоровье {hero.MaxHp}, золото {hero.Gold}, очков потрачено {Worlds.Spent(first)}, спусков {first.Descents}");
+        GD.Print($"Миры: планировка одинакова {firstLayout == repeat}, боссы: этаж 10 {Enemy.BossForFloor(10, 10).Name}, этаж 15 в длинном {Enemy.BossForFloor(15, 20).Name}, обычный финал {Enemy.BossForFloor(15).Name}");
+        ShowMainMenu();
+        Worlds.Close();
+
+        Worlds.Select(second);
+        GD.Print($"Миры: второй мир осколки {Profile.Current.Shards}, файл {Profile.FilePath}");
+        OpenWorldForTest(second);
+        _metaLocked = true;
+        GameOver("проверка");
+        GD.Print($"Миры: вечная смерть: потерян {_worldLost}, мир открыт {Worlds.Current != null}, осталось миров {Worlds.LoadAll().Count}");
+        _worldLost = false;
+        Worlds.Delete(first);
+        ShowMainMenu();
+    }
+
+    private void OpenWorldForTest(WorldInfo world)
+    {
+        Worlds.Select(world);
+        world.Descents++;
+        _isNetworkGame = false;
+        StartRun(new List<HeroSpec> { new(world.Class) }, Difficulties.Get(world.Difficulty));
+    }
+
+    private static int LayoutHash(int floor, int seed)
+    {
+        var map = DungeonGenerator.Generate(MapWidth, MapHeight, new GameRandom(unchecked(seed * 31 + floor * 104729)), Themes.IndexFor(floor));
+        return map.StairsPos.X * 1000 + map.StairsPos.Y + map.Rooms.Count * 100000;
+    }
+
+    /// <summary>Лагерь: герой ходит, упирается в костёр и открывает разговор, Esc-путь возвращает в лагерь.</summary>
+    private void RunCampTest()
+    {
+        var start = _campHero.GridPos;
+        OnCampMove(new Vector2I(0, -1));
+        OnCampMove(new Vector2I(0, -1));
+        var walked = _campHero.GridPos;
+        OnCampMove(new Vector2I(0, -1));
+        var state = _state;
+        CloseCampDialog();
+        _campHero.Teleport(new Vector2I(4, 5));
+        OnCampMove(new Vector2I(0, -1));
+        var forge = _state;
+        CloseCampDialog();
+        _campHero.Teleport(CampScene.StartCell);
+        UpdateCampOverlay();
+        GD.Print($"Лагерь: шаги {start} → {walked}, костёр: {state}, кузница: {forge}, вернулись: {_state}, стена: {_camp.IsWalkable(new Vector2I(0, 5))}");
+    }
+
+    /// <summary>Сделка, реликварий, пленник, запись и то, что всё это переживает сохранение.</summary>
+    private void RunStoryTest(Player hero)
+    {
+        Vector2I Free() => DungeonMap.Directions.Select(d => hero.GridPos + d).First(c => _map.Get(c) == Tile.Floor && !IsOccupied(c));
+
+        int attack = hero.Attack, hp = hero.MaxHp;
+        var pact = PlaceShrine(Free(), ShrineKind.Pact, true);
+        pact.Deals = new[] { 0, 3, 5 };
+        var save = pact.CreateSave();
+        ApplyWanderer(hero, 0, pact.GridPos);
+        GD.Print($"Сюжет: сделка: атака {attack} → {hero.Attack}, здоровье {hp} → {hero.MaxHp}, сделок {hero.Pacts.Count}, алтарь исчез {!_shrines.ContainsKey(save.X == pact.GridPos.X ? pact.GridPos : default)}, вариантов сохранено {save.Deals.Length}");
+
+        var loaded = new PlayerSave();
+        var data = hero.CreateSave();
+        GD.Print($"Сюжет: сохранение героя: сделки [{string.Join(", ", data.Pacts)}]");
+
+        var relic = PlaceShrine(Free(), ShrineKind.Reliquary, true);
+        relic.Offer.AddRange(ItemCatalog.Legendaries.Take(3).Select(template => new Item(template, Rarity.Legendary)));
+        hero.Inventory.Items.Clear();
+        ApplyWanderer(hero, 1, relic.GridPos);
+        GD.Print($"Сюжет: реликварий: в сумке {hero.Inventory.Items.FirstOrDefault()?.Name}");
+
+        var captive = PlaceShrine(Free(), ShrineKind.Captive, true);
+        captive.Extra = 0;
+        RescueCaptive(hero, captive);
+        var note = PlaceShrine(Free(), ShrineKind.Note, true);
+        note.Extra = 2;
+        ReadNote(hero, note);
+        CloseChoice();
+        GD.Print($"Сюжет: лагерь: спасены [{string.Join(", ", Profile.Current.Rescued)}], записи [{string.Join(", ", Profile.Current.Notes)}], кузница открыта {Profile.IsOpen(Profile.Upgrades.First(u => u.Id == Profile.Forge))}");
+
+        hero.AddPact(Pacts.All[2]);
+        GD.Print($"Сюжет: слабые зелья: {PotionPower(hero, 12)}; легендарок доступно {ItemCatalog.Legendaries.Count(t => t.Unlock == null || Profile.Has(t.Unlock))} из {ItemCatalog.Legendaries.Length}");
+    }
+
     /// <summary>Легендарные вещи, разбойник, условия этажа, странник, наследие.</summary>
     private void RunWorldTest()
     {
         var hero = _localHero;
+        RunSetTest(hero);
+        RunStoryTest(hero);
         Vector2I Free() => DungeonMap.Directions.Select(d => hero.GridPos + d).First(c => _map.Get(c) == Tile.Floor && _map.CanMove(hero.GridPos, c) && !IsOccupied(c));
         Enemy Place(string name)
         {

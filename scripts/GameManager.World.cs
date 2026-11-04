@@ -35,10 +35,21 @@ public partial class GameManager
         AddChild(_choicePanel);
         _choicePanel.Chosen += index =>
         {
+            if (_state == GameState.CampDialog)
+            {
+                OnCampChoice(index);
+                return;
+            }
             CloseChoice();
             SubmitLocalAction(HeroAction.Wanderer(index, _wandererCell));
         };
-        _choicePanel.Cancelled += CloseChoice;
+        _choicePanel.Cancelled += () =>
+        {
+            if (_state == GameState.CampDialog)
+                CloseCampDialog();
+            else
+                CloseChoice();
+        };
     }
 
     private void CloseChoice()
@@ -51,7 +62,7 @@ public partial class GameManager
     private void RollFloorCondition(bool bossFloor)
     {
         _condition = FloorCondition.None;
-        if (_floor >= 3 && !bossFloor && _rng.NextDouble() < ConditionChance)
+        if (_floor >= 3 && !bossFloor && _rng.NextDouble() < ConditionChance * EventScale)
             _condition = (FloorCondition)_rng.Next(1, 5);
     }
 
@@ -133,9 +144,20 @@ public partial class GameManager
 
     private void ApplyWanderer(Player hero, int choice, Vector2I cell)
     {
-        if (hero.IsGhost || !_shrines.TryGetValue(cell, out var shrine) || shrine.Kind != ShrineKind.Wanderer)
+        if (hero.IsGhost || !_shrines.TryGetValue(cell, out var shrine))
             return;
-        switch (choice)
+        if (shrine.Kind == ShrineKind.Pact)
+        {
+            ApplyPact(hero, choice, shrine);
+            return;
+        }
+        if (shrine.Kind == ShrineKind.Reliquary)
+        {
+            ApplyReliquary(hero, choice, shrine);
+            return;
+        }
+        if (shrine.Kind != ShrineKind.Wanderer)
+            return;        switch (choice)
         {
             case 0:
                 hero.Gold += WandererGold;

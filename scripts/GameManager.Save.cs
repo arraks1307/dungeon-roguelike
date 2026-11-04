@@ -73,7 +73,7 @@ public partial class GameManager
         if (data == null || !TryRestore(data))
         {
             SaveSystem.Delete();
-            ShowMainMenu();
+            GoHome();
             return;
         }
 
@@ -100,6 +100,8 @@ public partial class GameManager
             // Сохранение — всегда одиночная игра: отряд из одного героя нужного класса
             _partySpec = new List<HeroSpec> { new(ClassCatalog.Get(data.Player.Class)) };
             CreateParty(_partySpec, 0);
+            if (InWorld)
+                _localHero.SetBuild(Worlds.BuildBonus(Worlds.Current));
             _localHero.PendingLevelUps = data.PendingLevelUps;
             _levelUpPanel.Visible = false;
             _map = data.Map.ToMap();
@@ -154,7 +156,12 @@ public partial class GameManager
             PlaceChest(new Vector2I(save.X, save.Y), save.Mimic, save.Secret);
 
         foreach (var save in data.Shrines ?? new List<ShrineSave>())
-            PlaceShrine(new Vector2I(save.X, save.Y), save.Kind, save.Explained);
+        {
+            var shrine = PlaceShrine(new Vector2I(save.X, save.Y), save.Kind, save.Explained);
+            shrine.Deals = save.Deals ?? Array.Empty<int>();
+            shrine.Extra = save.Extra;
+            shrine.Offer.AddRange((save.Offer ?? new List<ItemSave>()).Select(item => item.ToItem()).Where(item => item != null));
+        }
 
         if (data.Merchant != null)
         {

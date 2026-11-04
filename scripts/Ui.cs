@@ -59,7 +59,7 @@ public static class Ui
     public static Button CreateItemButton(Item item, string text, Action onPressed, Action onFocused)
     {
         var button = CreateButton(text, onPressed);
-        button.Icon = ItemIcons.Get(item, 48); // 48 = 24 × 2: пиксельная иконка увеличивается ровно
+        button.Icon = ItemIcons.Get(item, 48);
         button.Alignment = HorizontalAlignment.Left;
         button.CustomMinimumSize = new Vector2(380f, 58f);
         button.AddThemeFontSizeOverride("font_size", 17);

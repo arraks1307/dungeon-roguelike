@@ -8,8 +8,8 @@ namespace Roguelike;
 /// </summary>
 public partial class CameraRig : Camera3D
 {
-    // Камера почти сверху (~65°), чтобы стены не загораживали игрока
-    private static readonly Vector3 BaseOffset = new(0f, 17f, 8f);
+    // Камера под 60°: виден объём стен и глубина, но стены ещё не загораживают героя
+    private static readonly Vector3 BaseOffset = new(0f, 16f, 9.2f);
     private const float MinZoom = 0.5f;
     private const float MaxZoom = 1.6f;
     private const float ZoomStep = 0.1f;
@@ -21,7 +21,8 @@ public partial class CameraRig : Camera3D
     /// </summary>
     public static readonly Basis ViewBasis = Basis.LookingAt(-BaseOffset, Vector3.Up);
 
-    private float _zoom = 1f;
+    private Vector3 _offset = BaseOffset;
+    private float _zoom = 0.82f; // ближе обычного: модели крупнее, сцена выглядит кинематографичнее
     private double _menuTime;
     private float _shake;
 
@@ -42,6 +43,13 @@ public partial class CameraRig : Camera3D
     public void Zoom(int direction) => _zoom = Mathf.Clamp(_zoom + direction * ZoomStep, MinZoom, MaxZoom);
 
     public void SnapToTarget() => Position = GoalPosition();
+
+    /// <summary>Другой ракурс (низкая камера лагеря); null — обычный вид сверху.</summary>
+    public void SetView(Vector3? offset)
+    {
+        _offset = offset ?? BaseOffset;
+        Basis = Basis.LookingAt(-_offset, Vector3.Up);
+    }
 
     /// <summary>Тряска камеры: сила затухает сама за доли секунды.</summary>
     public void Shake(float strength)
@@ -73,6 +81,6 @@ public partial class CameraRig : Camera3D
             return MenuCenter + drift + BaseOffset * 1.2f;
         }
         // Высоту героя не учитываем: иначе камера качалась бы вместе с его походкой
-        return new Vector3(Target.Position.X, 0f, Target.Position.Z) + BaseOffset * _zoom;
+        return new Vector3(Target.Position.X, 0f, Target.Position.Z) + _offset * _zoom;
     }
 }

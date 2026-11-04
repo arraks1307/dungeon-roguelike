@@ -14,6 +14,7 @@ public enum GraphicsQuality
 {
     High,
     Low,
+    Ultra,
 }
 
 /// <summary>Настройки игрока. Хранятся в user://settings.json.</summary>
@@ -27,6 +28,9 @@ public class GameSettings
     public AnimationSpeed Animation { get; set; } = AnimationSpeed.Normal;
     public bool DamageNumbers { get; set; } = true;
     public bool CameraShake { get; set; } = true;
+
+    /// <summary>Переназначенные клавиши: действие → код клавиши. Чего здесь нет, работает по умолчанию.</summary>
+    public System.Collections.Generic.Dictionary<string, long> Keys { get; set; } = new();
 
     // Сетевая игра: последние имя и адрес хоста, чтобы не вводить их каждый раз
     public string PlayerName { get; set; } = "";
@@ -45,7 +49,9 @@ public static class Settings
     /// <summary>Настройки применены — например, GameManager включает или выключает тяжёлые эффекты графики.</summary>
     public static event System.Action Applied;
 
-    public static bool HighQuality => Current.Graphics == GraphicsQuality.High;
+    public static bool HighQuality => Current.Graphics != GraphicsQuality.Low;
+
+    public static bool UltraQuality => Current.Graphics == GraphicsQuality.Ultra;
 
     /// <summary>Множитель длительности анимаций: 1 — обычные, 0.5 — быстрые, 0 — без анимаций.</summary>
     public static float AnimationScale => Current.Animation switch

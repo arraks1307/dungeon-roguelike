@@ -20,7 +20,7 @@ public partial class GameManager
         _legacyPanel = new LegacyPanel();
         AddChild(_legacyPanel);
         _legacyPanel.Closed += CloseLegacy;
-        _mainMenu.LegacyRequested += OpenLegacy;
+        _mainMenu.LegacyRequested += EnterCamp;
     }
 
     private void OpenLegacy()
@@ -31,6 +31,11 @@ public partial class GameManager
 
     private void CloseLegacy()
     {
+        if (InCamp)
+        {
+            CloseCampDialog();
+            return;
+        }
         _legacyPanel.Visible = false;
         _mainMenu.ShowMain();
     }
@@ -45,6 +50,20 @@ public partial class GameManager
         for (int i = 0; i < Profile.Level(Profile.Supplies); i++)
             hero.Inventory.TryAdd(new Item(ItemCatalog.HealthPotion));
         hero.PendingLevelUps += Profile.Level(Profile.Wisdom);
+
+        // Постройки лагеря
+        if (hero.Inventory.GetEquipped(EquipSlot.Weapon) is { } weapon)
+            weapon.Upgrade += Profile.Level(Profile.Forge);
+        hero.RefreshStats();
+        for (int i = 0; i < Profile.Level(Profile.Garden); i++)
+            hero.Inventory.TryAdd(new Item(ItemCatalog.GreatHealthPotion));
+        for (int i = 0; i < Profile.Level(Profile.MapTable); i++)
+            hero.Inventory.TryAdd(new Item(ItemCatalog.MapScroll));
+        for (int i = 0; i < Profile.Level(Profile.Stall); i++)
+        {
+            hero.Gold += 60;
+            hero.Inventory.TryAdd(new Item(ItemCatalog.Bomb));
+        }
     }
 
     /// <summary>Забег окончен: осколки, общая статистика и новые достижения. Возвращает строку для экрана итогов.</summary>
@@ -55,13 +74,17 @@ public partial class GameManager
         var profile = Profile.Current;
         int difficultyBonus = 100 + 25 * (int)_difficulty.Id;
         int shards = (_floor * 3 + _kills / 3 + (_victory ? 40 : 0)) * difficultyBonus / 100;
+        shards += shards * Profile.Level(Profile.Archive) / 10;
         profile.Shards += shards;
         profile.TotalKills += _kills;
         profile.BossesKilled += _bossesThisRun;
         profile.BestFloor = Math.Max(profile.BestFloor, _floor);
         profile.Revives += _localHero.RevivesMade;
         if (_victory)
+        {
             profile.Wins++;
+            profile.ClassWins.Add(_localHero.Class.Name);
+        }
 
         void Check(bool condition, string id, System.Collections.Generic.List<string> names)
         {
@@ -78,7 +101,11 @@ public partial class GameManager
         Check(profile.BossesKilled >= 10, "bosses", fresh);
         Check(profile.Revives >= 10, "rescue", fresh);
         Check(_localHero.Gold >= 1000, "rich", fresh);
-        Profile.Save();
+        Check(!_victory && _floor == 1, "firstfloor", fresh);
+        Check(!_victory && _localHero.Gold >= 500, "richcorpse", fresh);
+        Check(_victory && _localHero.Pacts.Count == 0, "cleanhands", fresh);
+        Check(_victory && _localHero.Pacts.Count >= 8, "soulless", fresh);
+        Check(profile.ClassWins.Count >= ClassCatalog.All.Length, "master", fresh);        Profile.Save();
 
         string achievements = fresh.Count > 0 ? $"\nДостижения: {string.Join(", ", fresh)}" : "";
         return $"\nОсколки: +{shards} (всего {profile.Shards}){achievements}";
