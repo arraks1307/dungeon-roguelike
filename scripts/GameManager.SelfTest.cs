@@ -112,6 +112,7 @@ public partial class GameManager
                     "warrior" => ClassCatalog.Warrior,
                     "ranger" => ClassCatalog.Ranger,
                     "mage" => ClassCatalog.Mage,
+                    "priest" => ClassCatalog.Priest,
                     _ => null,
                 };
             else if (arg.StartsWith("--difficulty="))
@@ -137,6 +138,8 @@ public partial class GameManager
                 _simGoldScale = int.Parse(arg["--sim-gold=".Length..]);
             else if (arg == "--sim-shop")
                 _simShop = true;
+            else if (arg == "--net-resume")
+                _netTestResume = true;
             else if (arg == "--net-tutorial")
                 _netTestTutorial = true;
             else if (arg == "--net-trade")
@@ -187,6 +190,7 @@ public partial class GameManager
         if (IsTestRun)
         {
             SaveSystem.FilePath = "user://selftest_save.json";
+            SaveSystem.NetFilePath = "user://selftest_netsave.json";
             SaveSystem.Delete();
         }
     }
@@ -309,6 +313,9 @@ public partial class GameManager
         {
             case "pause":
                 Pause();
+                break;
+            case "coop":
+                RunCoopTest();
                 break;
             case "tactics":
                 RunTacticsTest();
@@ -473,6 +480,114 @@ public partial class GameManager
             .OrderBy(direction => distances[hero.GridPos + direction])
             .FirstOrDefault();
         PerformHeroAction(hero, HeroAction.Move(step));
+    }
+
+    /// <summary>Приёмы отряда настоящими действиями. Нужен отряд из двух героев: --party=2.</summary>
+    private void RunCoopTest()
+    {
+        var a = _heroes[0];
+        var b = _heroes[1];
+        var room = _map.Rooms[0];
+        var center = room.Position + room.Size / 2;
+        var left = center + Vector2I.Left;
+        var right = center + Vector2I.Right;
+        var far = center + Vector2I.Up * 2;
+        Enemy Place(string name)
+        {
+            foreach (var old in _enemies.ToList())
+            {
+                _enemies.Remove(old);
+                old.QueueFree();
+            }
+            a.Teleport(left);
+            b.Teleport(far);
+            a.Heal(a.MaxHp);
+            b.Heal(b.MaxHp);
+            _roundActions = 0;
+            var enemy = SpawnEnemy(Enemy.FindType(name), center);
+            return enemy;
+        }
+        int Hit(Enemy enemy)
+        {
+            int before = enemy.Hp;
+            PerformHeroAction(a, HeroAction.Move(enemy.GridPos - a.GridPos));
+            return before - enemy.Hp;
+        }
+
+        var enemy1 = Place("Мимик");
+        int plain = Hit(enemy1);
+        enemy1 = Place("Мимик");
+        b.Teleport(right);
+        GD.Print($"Отряд: удар один {plain}, с фланга {Hit(enemy1)}");
+
+        var shield = Place("Щитоносец");
+        int blocked = Hit(shield);
+        shield = Place("Щитоносец");
+        b.Teleport(right);
+        GD.Print($"Отряд: щит поднят {shield.ShieldUp}: один {blocked}, с фланга {Hit(shield)}");
+
+        var frozen = Place("Мимик");
+        frozen.Freeze(3, b.Id);
+        GD.Print($"Отряд: заморозка союзника: удар {Hit(frozen)} (обычный {plain})");
+
+        var attacker = Place("Гоблин");
+        b.Teleport(left + Vector2I.Down);
+        PerformHeroAction(b, HeroAction.Wait);
+        int hpA = a.Hp, hpB = b.Hp;
+        EnemyAttacksPlayer(attacker, a, ranged: false);
+        GD.Print($"Отряд: прикрытие: цель {hpA} → {a.Hp}, прикрывший {hpB} → {b.Hp}");
+
+        Place("Слизень");
+        foreach (var old in _enemies.ToList())
+        {
+            _enemies.Remove(old);
+            old.QueueFree();
+        }
+        int turns = _turns;
+        _roundActions = 0;
+        PerformHeroAction(a, HeroAction.Wait);
+        int afterOne = _turns;
+        PerformHeroAction(a, HeroAction.Wait);
+        GD.Print($"Отряд: свободные ходы: один герой сделал 2 действия, раундов +{_turns - turns} (после первого +{afterOne - turns})");
+
+        b.Teleport(left + Vector2I.Right);
+        b.TakeDamage(b.Hp);
+        OnHeroDied(b, "тест");
+        var wall = DungeonMap.Directions.Select(d => b.GridPos + d).FirstOrDefault(c => !_map.IsWalkable(c), b.GridPos);
+        int cellCount = 0;
+        var flown = b.GridPos;
+        for (int i = 0; i < 12; i++)
+        {
+            PerformHeroAction(b, HeroAction.Move(Vector2I.Up));
+            if (!_map.IsWalkable(b.GridPos))
+                cellCount++;
+        }
+        GD.Print($"Отряд: призрак пролетел {flown} → {b.GridPos}, клеток внутри стен {cellCount}, раундов это не добавило");
+        b.Teleport(left + Vector2I.Right);
+        PerformHeroAction(a, HeroAction.Move(Vector2I.Right));
+        bool ghostAfterOne = b.IsGhost;
+        PerformHeroAction(a, HeroAction.Move(Vector2I.Right));
+        GD.Print($"Отряд: подъём: призрак после первого шага {ghostAfterOne}, после второго {b.IsGhost}, здоровье {b.Hp}/{b.MaxHp}, поднял {a.RevivesMade}");
+
+        a.Gold = 120;
+        int goldB = b.Gold, bagA = a.Inventory.Items.Count, bagB = b.Inventory.Items.Count;
+        GiveGold(a);
+        GiveItem(a, 0);
+        GD.Print($"Отряд: передача: золото {goldB} → {b.Gold}, сумки {bagA}/{bagB} → {a.Inventory.Items.Count}/{b.Inventory.Items.Count}");
+
+        ClearPlates();
+        var plateA = left;
+        var plateB = left + Vector2I.Down * 1;
+        a.Teleport(plateA + Vector2I.Up);
+        PlacePlate(plateA);
+        PlacePlate(right);
+        b.Teleport(right);
+        int goldBefore = a.Gold;
+        PerformHeroAction(a, HeroAction.Move(Vector2I.Down));
+        GD.Print($"Отряд: плиты: осталось {_plates.Count}, золото {goldBefore} → {a.Gold}");
+
+        GD.Print($"Отряд: итоги: {PartySummary().Replace('\n', ';')}");
+        GetTree().Quit();
     }
 
     /// <summary>Новые правила боя: каждый враг разыгрывается настоящими ходами, числа печатаются.</summary>

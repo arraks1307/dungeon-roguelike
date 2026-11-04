@@ -17,6 +17,7 @@ public partial class LobbyPanel : CanvasLayer
     public event Action<string, string> JoinRequested;  // имя, адрес
     public event Action<int> ClassChosen;
     public event Action<DifficultyDef> StartRequested;
+    public event Action ResumeRequested;                // продолжить сохранённый сетевой забег
     public event Action LeaveRequested;                 // выйти из лобби
     public event Action BackRequested;                  // назад в главное меню
 
@@ -32,6 +33,7 @@ public partial class LobbyPanel : CanvasLayer
     private Label _addressesLabel;
     private HBoxContainer _difficultyRow;
     private Button _startButton;
+    private Button _resumeButton;
     private Label _roomStatus;
     private readonly List<Button> _classButtons = new();
     private DifficultyDef _difficulty = Difficulties.Normal;
@@ -137,6 +139,8 @@ public partial class LobbyPanel : CanvasLayer
         column.AddChild(buttons);
         _startButton = Ui.CreateButton("Начать забег", () => StartRequested?.Invoke(_difficulty));
         buttons.AddChild(_startButton);
+        _resumeButton = Ui.CreateButton("Продолжить забег", () => ResumeRequested?.Invoke());
+        buttons.AddChild(_resumeButton);
         buttons.AddChild(Ui.CreateButton("Выйти", () => LeaveRequested?.Invoke()));
     }
 
@@ -175,6 +179,7 @@ public partial class LobbyPanel : CanvasLayer
         _roomScreen.Visible = true;
         _difficultyRow.Visible = isHost;
         _startButton.Visible = isHost;
+        _resumeButton.Visible = isHost && SaveSystem.HasNetSave;
         _roomStatus.Text = isHost ? "" : "Ждём, пока хост начнёт забег.";
 
         var addresses = NetSession.LocalAddresses();
@@ -225,6 +230,7 @@ public partial class LobbyPanel : CanvasLayer
     public void ClickHost() => _hostButton.EmitSignal(BaseButton.SignalName.Pressed);
     public void ClickJoin() => _joinButton.EmitSignal(BaseButton.SignalName.Pressed);
     public void ClickStart() => _startButton.EmitSignal(BaseButton.SignalName.Pressed);
+    public void ClickResume() => _resumeButton.EmitSignal(BaseButton.SignalName.Pressed);
     public void ClickClass(int index) => _classButtons[index].EmitSignal(BaseButton.SignalName.Pressed);
 
     public string EnteredName => _nameEdit.Text;

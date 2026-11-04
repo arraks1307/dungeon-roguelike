@@ -33,6 +33,8 @@ public class SaveData
     public ulong RngState;
     public long RngCalls;
     public bool DescentRequested;
+    public int RoundActions;
+    public List<int[]> Plates;
 }
 
 /// <summary>Герой отряда в сетевом снимке: кто он, сходил ли в этом раунде и всё его состояние.</summary>
@@ -40,6 +42,9 @@ public class PartyHeroSave
 {
     public int Id;
     public string Name;
+    public string Player;  // имя игрока из лобби: по нему он находит своего героя
+    public long Peer;      // сетевой номер игрока
+    public bool Offline;
     public bool HasActed;
     public int PendingLevelUps;
     public PlayerSave State;
@@ -245,6 +250,39 @@ public static class SaveSystem
         using var memory = new System.IO.MemoryStream(packed);
         using var gzip = new System.IO.Compression.GZipStream(memory, System.IO.Compression.CompressionMode.Decompress);
         return JsonSerializer.Deserialize<SaveData>(gzip, Options);
+    }
+
+    /// <summary>Сетевой забег хранит хост, отдельно от одиночного сохранения.</summary>
+    public static string NetFilePath { get; set; } = "user://netsave.json";
+
+    public static bool HasNetSave => FileAccess.FileExists(NetFilePath);
+
+    public static void SaveNetwork(SaveData data)
+    {
+        using var file = FileAccess.Open(NetFilePath, FileAccess.ModeFlags.Write);
+        file?.StoreString(JsonSerializer.Serialize(data, Options));
+    }
+
+    public static SaveData LoadNetwork()
+    {
+        if (!HasNetSave)
+            return null;
+        try
+        {
+            var data = JsonSerializer.Deserialize<SaveData>(FileAccess.GetFileAsString(NetFilePath), Options);
+            return data?.Version == CurrentVersion && data.Party != null ? data : null;
+        }
+        catch (JsonException exception)
+        {
+            GD.PushWarning($"Сетевое сохранение повреждено: {exception.Message}");
+            return null;
+        }
+    }
+
+    public static void DeleteNetwork()
+    {
+        if (HasNetSave)
+            DirAccess.RemoveAbsolute(ProjectSettings.GlobalizePath(NetFilePath));
     }
 
     public static void Delete()

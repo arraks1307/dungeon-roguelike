@@ -43,6 +43,14 @@ public partial class NetSession : Node
     public event Action<long, Vector2I> PingReceived;                // у всех: кто и какую клетку отметил
     public event Action<long> ResyncRequested;                       // только у хоста: клиенту нужен снимок мира
     public event Action<byte[]> SnapshotReceived;                    // у всех: снимок мира от хоста
+    public event Action<int> RejoinAccepted;                         // у вернувшегося клиента: его герой
+    public event Action<byte[]> RunResumed;                          // у всех: хост продолжил сохранённый забег
+
+    /// <summary>Хост: есть ли отключённый герой с таким именем. Возвращает его номер или null.</summary>
+    public Func<string, int?> FindOfflineHero { get; set; }
+
+    /// <summary>Хост: игрок вернулся к герою heroId.</summary>
+    public event Action<long, int> PlayerRejoined;
 
     private readonly List<LobbyMember> _members = new();
     private string _myName = "";
@@ -167,6 +175,15 @@ public partial class NetSession : Node
         if (!IsHost)
             return;
         long sender = Multiplayer.GetRemoteSenderId();
+        var returning = version == MainMenu.Version && _inGame ? FindOfflineHero?.Invoke(CleanName(name)) : null;
+        if (returning.HasValue)
+        {
+            _members.RemoveAll(member => member.Name == CleanName(name)); // старое соединение уже мертво
+            _members.Add(new LobbyMember(sender, CleanName(name), Math.Clamp(classIndex, 0, ClassCatalog.All.Length - 1)));
+            RpcId(sender, MethodName.Rejoined, returning.Value);
+            PlayerRejoined?.Invoke(sender, returning.Value);
+            return;
+        }
         string refusal = version != MainMenu.Version ? $"у хоста другая версия игры ({MainMenu.Version}, у тебя {version})"
             : _inGame ? "забег уже начался"
             : _members.Count >= GameManager.MaxPartySize ? "отряд уже полный"
@@ -178,6 +195,27 @@ public partial class NetSession : Node
         }
         _members.Add(new LobbyMember(sender, CleanName(name), Math.Clamp(classIndex, 0, ClassCatalog.All.Length - 1)));
         SendLobby();
+    }
+
+    [Rpc(MultiplayerApi.RpcMode.Authority)]
+    private void Rejoined(int heroId)
+    {
+        _inGame = true;
+        RejoinAccepted?.Invoke(heroId);
+    }
+
+    /// <summary>Хост продолжает сохранённый забег: всем один снимок мира, без обучения.</summary>
+    public void ResumeRun(byte[] snapshot)
+    {
+        if (IsHost)
+            Rpc(MethodName.ApplyResume, snapshot);
+    }
+
+    [Rpc(MultiplayerApi.RpcMode.Authority, CallLocal = true)]
+    private void ApplyResume(byte[] snapshot)
+    {
+        _inGame = true;
+        RunResumed?.Invoke(snapshot);
     }
 
     [Rpc(MultiplayerApi.RpcMode.Authority)]

@@ -33,7 +33,6 @@ public partial class Hud : CanvasLayer
     private ColorRect _gameOverPanel;
     private Label _gameOverLabel;
     private VBoxContainer _partyBox;
-    private Label _waitingLabel;
     private Label _stairsLabel;
     private LineEdit _chatEdit;
     private readonly Dictionary<ProgressBar, Tween> _barTweens = new();
@@ -78,9 +77,6 @@ public partial class Hud : CanvasLayer
         _partyBox = new VBoxContainer { Visible = false, MouseFilter = Control.MouseFilterEnum.Ignore };
         _partyBox.AddThemeConstantOverride("separation", 6);
         leftColumn.AddChild(_partyBox);
-        _waitingLabel = Ui.CreateMutedLabel(14);
-        _waitingLabel.Visible = false;
-        leftColumn.AddChild(_waitingLabel);
         _stairsLabel = Ui.CreateLabel(14);
         _stairsLabel.AddThemeColorOverride("font_color", new Color(1f, 0.85f, 0.4f));
         _stairsLabel.Visible = false;
@@ -351,7 +347,7 @@ public partial class Hud : CanvasLayer
 
     /// <summary>
     /// Компактные карточки остальных героев отряда: имя цветом класса, уровень, полоска здоровья
-    /// и пометка «призрак» или «сходил». В одиночной игре блок скрыт.
+    /// и пометка «призрак». В одиночной игре блок скрыт.
     /// </summary>
     public void UpdateParty(List<Player> heroes, Player local)
     {
@@ -368,7 +364,7 @@ public partial class Hud : CanvasLayer
             rows.AddThemeConstantOverride("separation", 3);
             card.AddChild(rows);
 
-            string status = hero.IsGhost ? "  •  призрак" : hero.HasActed ? "  •  сходил" : "";
+            string status = hero.IsOffline ? "  •  нет связи" : hero.IsGhost ? "  •  призрак" : "";
             var name = Ui.CreateLabel(14, $"{hero.DisplayName}  •  ур. {hero.Level}{status}");
             name.AddThemeColorOverride("font_color", hero.IsGhost ? UiTheme.TextMuted : hero.Class.Color.Lightened(0.35f));
             rows.AddChild(name);
@@ -378,14 +374,6 @@ public partial class Hud : CanvasLayer
             bar.Value = hero.IsGhost ? 0 : hero.Hp;
             rows.AddChild(bar);
         }
-    }
-
-    /// <summary>Строка «Ждём: …» — кто из отряда ещё не сделал ход в этом раунде.</summary>
-    public void SetWaiting(List<string> names)
-    {
-        _waitingLabel.Visible = names is { Count: > 0 };
-        if (_waitingLabel.Visible)
-            _waitingLabel.Text = $"Ждём: {string.Join(", ", names)}";
     }
 
     /// <summary>Полоска плавно доезжает до нового значения, а не прыгает к нему.</summary>

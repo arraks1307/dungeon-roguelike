@@ -98,9 +98,13 @@ public partial class Enemy : Actor
     private const float HeavyHitPower = 2.2f;
     private const float ExplosionPower = 3f;
     private const int ShamanRange = 6;
+    private const int SlamInterval = 4;
+    private const int SlamRadius = 2;
+    private const float SlamPower = 1.6f;
 
     private Vector2I? _heavyCell;   // куда Громила обрушит удар на следующем ходу
     private bool _fuseLit;          // Подрывник взорвётся на следующем ходу
+    private bool _slamReady;        // босс ударит по площади на следующем ходу
     private MeshInstance3D _warning;
     private MeshInstance3D _shield;
 
@@ -128,9 +132,13 @@ public partial class Enemy : Actor
         ? new Color(BaseColor.Lerp(IceColor, 0.7f), BaseColor.A)
         : BaseColor;
 
-    public void Freeze(int turns)
+    /// <summary>Кто заморозил (номер героя, -1 — никто): союзник этого героя разобьёт врага двойным уроном.</summary>
+    public int FrozenBy { get; private set; } = -1;
+
+    public void Freeze(int turns, int by = -1)
     {
         FrozenTurns = turns;
+        FrozenBy = by;
         CancelThreat(); // мороз сбивает замах и гасит фитиль
 
         BodyMaterial.AlbedoColor = DisplayColor;
@@ -260,6 +268,7 @@ public partial class Enemy : Actor
     {
         _heavyCell = null;
         _fuseLit = false;
+        _slamReady = false;
         ClearWarning();
     }
 
@@ -375,6 +384,9 @@ public partial class Enemy : Actor
             return;
         _turnsTaken++;
 
+        if (IsBoss && BossSlamTurn(world, stepsToTarget))
+            return;
+
         switch (Type.Behavior)
         {
             case EnemyBehavior.Archer:
@@ -411,6 +423,23 @@ public partial class Enemy : Actor
                 MeleeTurn(world, target);
                 break;
         }
+    }
+
+    /// <summary>Босс бьёт по площади: кольцо появляется заранее, и отряд должен разбежаться.</summary>
+    private bool BossSlamTurn(IGameWorld world, int stepsToTarget)
+    {
+        if (_slamReady)
+        {
+            CancelThreat();
+            world.EnemySlam(this, SlamRadius, SlamPower);
+            return true;
+        }
+        if (_turnsTaken % SlamInterval != 2 || stepsToTarget > SlamRadius)
+            return false;
+        _slamReady = true;
+        ShowWarning(GridPos, 5.5f);
+        world.EnemyTelegraphs(this, $"{DisplayName} поднимает оружие над головой!");
+        return true;
     }
 
     /// <summary>Замах и удар через ход. Герой видит клетку и успевает уйти или встать в стойку.</summary>

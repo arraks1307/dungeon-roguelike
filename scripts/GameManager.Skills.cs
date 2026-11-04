@@ -38,13 +38,15 @@ public partial class GameManager
             SkillId.ArrowRain => ArrowRain(hero),
             SkillId.Fireball => Fireball(hero),
             SkillId.FrostNova => FrostNova(hero),
+            SkillId.Smite => Smite(hero),
+            SkillId.Mend => Mend(hero),
             _ => false,
         };
         if (!used)
             return false;
 
         hero.StartCooldown(index);
-        if (skill.Id != SkillId.SecondWind)
+        if (skill.Id is not (SkillId.SecondWind or SkillId.Mend))
             hero.ChargeSkills(except: index); // боевая способность — тоже атака: заряжает вторую
         _tutorialSkillUsed = true;
         if (hero.IsInvisible && skill.Id != SkillId.SecondWind)
@@ -57,6 +59,7 @@ public partial class GameManager
 
     private bool Whirlwind(Player hero)
     {
+        PullEnemies(hero);
         var targets = _enemies.Where(enemy => _map.AreAdjacent(hero.GridPos, enemy.GridPos)).ToList();
         if (targets.Count == 0)
             return NoTargets(hero);
@@ -95,7 +98,7 @@ public partial class GameManager
         Effects.Projectile(this, hero.GridPos, target.GridPos, hero.Class.Color);
         _sound.Play(Sound.Shoot);
         bool crit = _rng.Next(100) < hero.Bonuses.Crit;
-        int damage = ApplyEnemyShield(target, RollDamage(hero, target) + 3 + PerkBonusDamage(hero, target));
+        int damage = ApplyTeamwork(hero, target, RollDamage(hero, target) + 3 + PerkBonusDamage(hero, target));
         if (crit)
             damage *= 2;
         _hud.AddMessage($"Меткий выстрел{(crit ? " — в яблочко!" : "")}: {target.DisplayName} получает {damage}.");
@@ -160,8 +163,52 @@ public partial class GameManager
         {
             HitEnemy(enemy, damage, ice);
             if (!enemy.IsDead)
-                enemy.Freeze(3);
+                enemy.Freeze(3, hero.Id);
         }
+        return true;
+    }
+
+    private bool Smite(Player hero)
+    {
+        var target = NearestVisibleEnemy(hero);
+        if (target == null)
+            return NoTargets(hero);
+        var light = new Color(1f, 0.9f, 0.55f);
+        Effects.Projectile(this, hero.GridPos, target.GridPos, light);
+        Effects.Burst(this, target.GridPos, light, 24);
+        _sound.Play(Sound.Secret);
+        bool faith = hero.Has(PerkEffect.Faith);
+        HitEnemy(target, 4 + hero.Level + (faith ? 3 : 0), light);
+        int healing = faith ? 4 : 2;
+        foreach (var ally in LivingHeroes.Where(other => ChebyshevDistance(other.GridPos, hero.GridPos) <= 1).ToList())
+        {
+            ally.Heal(healing);
+            Effects.FloatingText(this, ally.GridPos, $"+{healing}", GoodColor);
+        }
+        return true;
+    }
+
+    private bool Mend(Player hero)
+    {
+        var patient = LivingHeroes.Where(other => other.IsHurt).OrderBy(other => (float)other.Hp / other.MaxHp).FirstOrDefault();
+        if (patient == null)
+        {
+            if (IsLocalHero(hero))
+                _hud.AddMessage("Лечить некого: весь отряд здоров.");
+            return false;
+        }
+        var patients = new List<Player> { patient };
+        if (hero.Has(PerkEffect.Grace))
+            patients.AddRange(LivingHeroes.Where(other => other != patient && other.IsHurt && ChebyshevDistance(other.GridPos, patient.GridPos) <= 1));
+        foreach (var ally in patients)
+        {
+            int amount = ally.MaxHp * 35 / 100;
+            ally.Heal(amount);
+            Effects.FloatingText(this, ally.GridPos, $"+{amount}", GoodColor);
+            Effects.Burst(this, ally.GridPos, GoodColor, 18);
+        }
+        _sound.Play(Sound.Heal);
+        Tell(hero, $"Исцеление: {patient.DisplayName}.", $"{hero.DisplayName} исцеляет: {patient.DisplayName}.", GoodColor);
         return true;
     }
 
@@ -183,6 +230,8 @@ public partial class GameManager
         if (enemy.IsDead)
             return;
         enemy.TakeDamage(damage);
+        if (_attacker != null)
+            _attacker.DamageDealt += damage;
         Effects.FloatingText(this, enemy.GridPos, damage.ToString(), color);
         Effects.Burst(this, enemy.GridPos, color, 10);
         if (enemy.IsDead)

@@ -17,7 +17,10 @@ public enum HeroActionKind
     Upgrade, // услуга: заточить надетую вещь из слота Index (EquipSlot)
     Treat,   // услуга: вылечиться у торговца
     Mystery, // услуга: купить таинственный ларец
-    Leave,   // игрок отключился — герой покидает отряд (присылает только хост)
+    GiveItem, // передать союзнику предмет из ячейки Index
+    GiveGold, // передать союзнику золото
+    Leave,   // игрок отключился: герой ждёт его возвращения (присылает только хост)
+    Rejoin,  // игрок вернулся (присылает только хост)
 }
 
 /// <summary>
@@ -38,7 +41,10 @@ public readonly record struct HeroAction(HeroActionKind Kind, Vector2I Direction
     public static HeroAction Upgrade(int slot) => new(HeroActionKind.Upgrade, Index: slot);
     public static HeroAction Treat => new(HeroActionKind.Treat);
     public static HeroAction Mystery => new(HeroActionKind.Mystery);
+    public static HeroAction GiveItem(int index) => new(HeroActionKind.GiveItem, Index: index);
+    public static HeroAction GiveGold => new(HeroActionKind.GiveGold);
     public static HeroAction Leave => new(HeroActionKind.Leave);
+    public static HeroAction Rejoin => new(HeroActionKind.Rejoin);
 
     /// <summary>Тратит ли действие ход (иначе выполняется сразу и раунд не двигает).</summary>
     public bool SpendsTurn => Kind is HeroActionKind.Move or HeroActionKind.Skill or HeroActionKind.UseItem;

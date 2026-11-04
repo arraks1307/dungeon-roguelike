@@ -224,7 +224,7 @@ public partial class GameManager
                 if (item.Kind == ItemKind.FireScroll)
                     DamageEnemies(targets, power + _floor, item.Color, "Огненная волна!");
                 else
-                    FreezeEnemies(targets, power, item.Color);
+                    FreezeEnemies(targets, power, item.Color, hero.Id);
                 return true;
 
             case ItemKind.Bomb:
@@ -268,13 +268,13 @@ public partial class GameManager
         }
     }
 
-    private void FreezeEnemies(List<Enemy> targets, int turns, Color color)
+    private void FreezeEnemies(List<Enemy> targets, int turns, Color color, int heroId)
     {
         _hud.AddMessage($"Ледяной ветер! Враги заморожены на {turns} ходов.", InfoColor);
         _sound.Play(Sound.Teleport);
         foreach (var enemy in targets)
         {
-            enemy.Freeze(turns);
+            enemy.Freeze(turns, heroId);
             Effects.Burst(this, enemy.GridPos, color, 16);
         }
     }

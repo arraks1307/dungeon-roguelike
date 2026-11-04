@@ -30,6 +30,7 @@ public interface IGameWorld
     void EnemyTelegraphs(Enemy enemy, string text);
     void EnemyHeavyHit(Enemy enemy, Vector2I cell, float power);
     void EnemyExplodes(Enemy enemy, float power);
+    void EnemySlam(Enemy enemy, int radius, float power);
     Enemy FindHurtAlly(Enemy healer, int range);
     void ShamanHeals(Enemy shaman, Enemy ally);
     void OpenDoor(Vector2I cell);

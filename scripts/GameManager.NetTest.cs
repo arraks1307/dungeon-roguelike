@@ -32,6 +32,7 @@ public partial class GameManager
     private bool _netTestTrade;             // боты торгуют и выбрасывают вещи
     private bool _netTestUi;                // в лобби входим настоящими кнопками
     private bool _netTestInput;             // в конце хост жмёт настоящие Enter, Esc и правую кнопку мыши
+    private bool _netTestResume;            // хост продолжает сохранённый забег, а не начинает новый
     private bool _netTestDone;
     private ulong _netTestStartMs;
 
@@ -81,7 +82,9 @@ public partial class GameManager
 
         if (!_isNetworkGame && _net.IsHost && _net.Members.Count >= _netTestPlayers)
         {
-            if (_netTestUi)
+            if (_netTestResume)
+                ResumeSavedRun();
+            else if (_netTestUi)
                 _lobby.ClickStart();
             else
                 _net.StartGame((_testDifficulty ?? Difficulties.Normal).Id); // повторные вызовы хост игнорирует
@@ -183,6 +186,8 @@ public partial class GameManager
                  $"случайных чисел {_rng.Calls}, контрольная сумма {StateChecksum():X8}, рассинхронов {_desyncs}, " +
                  $"восстановлений {_resyncs}, сделок {_tradeCount}" +
                  (_gameOver ? " (забег окончен)" : ""));
+        var stairs = _map.StairsPos;
+        GD.Print($"СЕТЬ: {_netTestRole}:   лестница {stairs} клетка {_map.Get(stairs)}, спуск запрошен {_descentRequested}, босс {_boss?.DisplayName}, врагов {_enemies.Count}, неудач бота {_botFailures}, действий в раунде {_roundActions}");
         foreach (var hero in _heroes)
             GD.Print($"СЕТЬ: {_netTestRole}:   {hero.DisplayName} ({hero.Class.Name}) {hero.GridPos} здоровье {hero.Hp}/{hero.MaxHp} " +
                      $"ур. {hero.Level} золото {hero.Gold}{(hero.IsGhost ? " призрак" : "")}");

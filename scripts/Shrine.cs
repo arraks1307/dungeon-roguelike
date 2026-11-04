@@ -21,6 +21,9 @@ public partial class Shrine : Node3D
     /// <summary>Описание уже показано — следующий шаг в святыню её использует.</summary>
     public bool Explained { get; set; }
 
+    /// <summary>Кто из отряда согласился на сделку алтаря крови: она действует на всех.</summary>
+    public System.Collections.Generic.HashSet<int> Votes { get; } = new();
+
     public Color Glow => Kind switch
     {
         ShrineKind.Fountain => new Color(0.35f, 0.7f, 1f),

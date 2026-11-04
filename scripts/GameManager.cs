@@ -110,7 +110,7 @@ public partial class GameManager : Node3D, IGameWorld
     public Dictionary<Vector2I, int> PlayerDistances => _playerDistances;
 
     public Player NearestTarget(Vector2I from) => _heroes
-        .Where(hero => !hero.IsGhost && !hero.IsInvisible)
+        .Where(hero => !hero.IsGhost && !hero.IsInvisible && !hero.IsOffline)
         .OrderBy(hero => ChebyshevDistance(hero.GridPos, from))
         .FirstOrDefault();
 
@@ -123,6 +123,7 @@ public partial class GameManager : Node3D, IGameWorld
 
     public void EnemyAttacksPlayer(Enemy enemy, Player target, bool ranged, float power = 1f)
     {
+        target = FindCover(target);
         if (ranged && power == 1f)
         {
             Effects.Projectile(this, enemy.GridPos, target.GridPos, enemy.Type.Color);
@@ -351,6 +352,15 @@ public partial class GameManager : Node3D, IGameWorld
             case Key.I when _state == GameState.Inventory:
                 CloseInventory();
                 break;
+            case Key.T when _state == GameState.Inventory:
+                SubmitLocalAction(HeroAction.GiveItem(_inventoryPanel.FocusedIndex));
+                break;
+            case Key.Y when _state == GameState.Inventory:
+                SubmitLocalAction(HeroAction.GiveGold);
+                break;
+            case >= Key.Key6 and <= Key.Key8 when _state == GameState.Playing && _isNetworkGame:
+                _net.SendChat(QuickPhrases[key.PhysicalKeycode - Key.Key6]);
+                break;
             case Key.X when _state == GameState.Inventory:
                 SubmitLocalAction(HeroAction.Drop(_inventoryPanel.FocusedIndex));
                 break;
@@ -557,7 +567,7 @@ public partial class GameManager : Node3D, IGameWorld
     /// </summary>
     private void OnHeroDied(Player hero, string killerName)
     {
-        if (_heroes.All(other => other.IsGhost))
+        if (_heroes.All(other => other.IsGhost || other.IsOffline))
         {
             GameOver(killerName);
             return;
@@ -574,7 +584,9 @@ public partial class GameManager : Node3D, IGameWorld
     {
         _gameOver = true;
         _state = GameState.GameOver;
-        if (!_isNetworkGame)
+        if (_isNetworkGame)
+            SaveSystem.DeleteNetwork();
+        else
             SaveSystem.Delete(); // смерть окончательна — продолжить этот забег нельзя
         CloseLocalWindows();
         UpdateHud();
@@ -586,7 +598,7 @@ public partial class GameManager : Node3D, IGameWorld
             $"{title}\n" +
             $"Последний удар: {killerName}\n" +
             $"Побеждено врагов: {_kills}   Золото: {_localHero.Gold}\n" +
-            RecordScore() + "\n" +
+            RecordScore() + PartySummary() + "\n" +
             RestartHint);
     }
 
@@ -615,7 +627,9 @@ public partial class GameManager : Node3D, IGameWorld
         _gameOver = true;
         _state = GameState.GameOver;
         _victory = true;
-        if (!_isNetworkGame)
+        if (_isNetworkGame)
+            SaveSystem.DeleteNetwork();
+        else
             SaveSystem.Delete();
         CloseLocalWindows();
         UpdateHud();
@@ -630,7 +644,7 @@ public partial class GameManager : Node3D, IGameWorld
             "Владыка бездны повержен, и подземелье затихает.\n" +
             $"{heroes}, сложность: {_difficulty.Name.ToLower()}\n" +
             $"Побеждено врагов: {_kills}   Золото: {_localHero.Gold}   Ходов: {_turns}\n" +
-            RecordScore() + "\n" +
+            RecordScore() + PartySummary() + "\n" +
             RestartHint);
     }
 
@@ -653,6 +667,7 @@ public partial class GameManager : Node3D, IGameWorld
     {
         _floor++;
         _descentRequested = false;
+        _roundActions = 0;
         ClearLevelObjects();
 
         bool bossFloor = _floor % BossFloorInterval == 0;
@@ -679,6 +694,7 @@ public partial class GameManager : Node3D, IGameWorld
         SpawnEnemies(bossFloor ? enemyCount / 2 : enemyCount);
         SpawnChests();
         SpawnShrines();
+        SpawnPlates();
         SpawnItems(_rng.Next(3, 6) + _difficulty.ItemsPerFloor + (_heroes.Count - 1));
         SpawnGold(_rng.Next(2, 5) + (_heroes.Count - 1));
         if (!bossFloor)
@@ -687,6 +703,7 @@ public partial class GameManager : Node3D, IGameWorld
             SpawnBoss();
         else if (ShouldSpawnMerchant())
             SpawnMerchant();
+        MaybeSplitParty(bossFloor);
 
         UpdateFov();
         UpdateHud();
@@ -702,6 +719,7 @@ public partial class GameManager : Node3D, IGameWorld
             _hud.AddMessage("Где-то на этаже звенят монеты — здесь есть торговец.", InfoColor);
 
         SaveRun(); // автосохранение в начале каждого этажа
+        SaveNetworkRun();
     }
 
     /// <summary>
@@ -740,6 +758,7 @@ public partial class GameManager : Node3D, IGameWorld
         foreach (var shrine in _shrines.Values)
             shrine.QueueFree();
         _shrines.Clear();
+        ClearPlates();
         _merchant?.QueueFree();
         _merchant = null;
         _boss = null;
@@ -754,15 +773,12 @@ public partial class GameManager : Node3D, IGameWorld
     /// </summary>
     private bool PerformHeroAction(Player hero, HeroAction action)
     {
-        if (_gameOver || hero.IsGhost)
+        if (_gameOver)
             return false;
-        if (hero.HasActed)
-        {
-            if (IsLocalHero(hero) && !hero.IsBot)
-                _hud.SetWaiting(WaitingFor());
-            return false;
-        }
+        if (hero.IsGhost)
+            return PerformGhostAction(hero, action);
 
+        _attacker = hero;
         hero.IsGuarding = false; // стойка держится только до следующего действия
         int floorBefore = _floor;
         bool spent = action.Kind switch
@@ -772,6 +788,7 @@ public partial class GameManager : Node3D, IGameWorld
             HeroActionKind.UseItem => UseItem(hero, action.Index),
             _ => false,
         };
+        _attacker = null;
         if (spent && !_gameOver && _floor == floorBefore)
             TryDescend(); // герой подошёл к лестнице, у которой его ждали
 
@@ -787,15 +804,7 @@ public partial class GameManager : Node3D, IGameWorld
         }
 
         hero.HasActed = true;
-        if (LivingHeroes.All(other => other.HasActed))
-        {
-            EndRound();
-        }
-        else
-        {
-            UpdateFov();
-            UpdateHud();
-        }
+        CountPartyAction();
         return true;
     }
 
@@ -838,12 +847,19 @@ public partial class GameManager : Node3D, IGameWorld
             OpenDoor(target); // открыть дверь — отдельное действие, сам шаг будет следующим ходом
             return true;
         }
+        var ghost = _heroes.Find(other => other.IsGhost && other.GridPos == target);
+        if (ghost != null)
+        {
+            ReviveStep(hero, ghost);
+            return true;
+        }
         if (LivingHeroes.Any(other => other.GridPos == target))
             return false; // там стоит союзник
 
         hero.MoveTo(target);
         _sound.Play(Sound.Step);
         TryPickUpItem(hero, target);
+        CheckPlates(hero);
         CheckTrap(hero, target);
         if (_gameOver || hero.IsGhost)
             return true; // погиб на шипах
@@ -851,10 +867,6 @@ public partial class GameManager : Node3D, IGameWorld
             OnHeroReachedStairs(hero);
         return true;
     }
-
-    /// <summary>Кого ждём в этом раунде (для подсказки в HUD).</summary>
-    private List<string> WaitingFor() =>
-        LivingHeroes.Where(hero => !hero.HasActed).Select(hero => hero.DisplayName).ToList();
 
     /// <summary>
     /// Ручное нажатие клавиши движения. Если враг был виден до или после этого шага,
@@ -881,12 +893,12 @@ public partial class GameManager : Node3D, IGameWorld
     /// </summary>
     private void OnWalkRequested(Player hero, Vector2I direction)
     {
-        if (!IsLocalHero(hero) || _actionInFlight || hero.HasActed && !hero.IsGhost && !_gameOver)
-            return; // предыдущий шаг ещё в пути или ждём друзей — пропускаем этот «тик» ходьбы
+        if (!IsLocalHero(hero) || _actionInFlight)
+            return; // предыдущий шаг ещё в пути — пропускаем этот «тик» ходьбы
 
         var target = hero.GridPos + direction;
         string blocker = _state != GameState.Playing ? "открыто окно"
-            : hero.IsGhost ? "герой — призрак"
+            : hero.IsGhost ? (_map.InBounds(target) ? null : "край карты")
             : AnyEnemyVisible() ? "виден враг"
             : !_map.CanMove(hero.GridPos, target) ? "стена"
             : IsOccupied(target) ? "клетка занята"
@@ -937,6 +949,7 @@ public partial class GameManager : Node3D, IGameWorld
     private void EndRound()
     {
         _turns++;
+        _roundActions = 0;
         EnemiesTurn();
         if (_gameOver)
             return;
@@ -976,7 +989,8 @@ public partial class GameManager : Node3D, IGameWorld
         bool crit = _rng.Next(100) < bonuses.Crit;
         if (crit)
             damage *= 2;
-        damage = ApplyEnemyShield(enemy, damage);
+        damage = ApplyTeamwork(hero, enemy, damage);
+        hero.DamageDealt += damage;
 
         enemy.TakeDamage(damage);
         Effects.FloatingText(this, enemy.GridPos, crit ? $"{damage}!" : damage.ToString(), crit ? CritColor : Colors.White);
@@ -1006,6 +1020,8 @@ public partial class GameManager : Node3D, IGameWorld
     private void KillEnemy(Enemy enemy)
     {
         _hud.AddMessage($"{enemy.DisplayName} повержен!", GoodColor);
+        if (_attacker != null)
+            _attacker.KillsMade++;
         _enemies.Remove(enemy);
         enemy.Die();
         _kills++;
@@ -1069,7 +1085,7 @@ public partial class GameManager : Node3D, IGameWorld
     private void EnemiesTurn()
     {
         // Поле расстояний до ближайшего героя-цели считаем один раз за ход — им пользуются все враги
-        var targets = _heroes.Where(hero => !hero.IsGhost && !hero.IsInvisible).Select(hero => hero.GridPos).ToList();
+        var targets = _heroes.Where(hero => !hero.IsGhost && !hero.IsInvisible && !hero.IsOffline).Select(hero => hero.GridPos).ToList();
         _playerDistances = targets.Count > 0 ? _map.DistanceField(targets, ChaseDistance) : new Dictionary<Vector2I, int>();
 
         // ToList() — копия списка: босс может призвать новых врагов прямо во время перебора,
@@ -1132,15 +1148,13 @@ public partial class GameManager : Node3D, IGameWorld
     // ---------- Вспомогательное ----------
 
     /// <summary>
-    /// Обзор у отряда общий: объединяем то, что видит каждый живой герой.
-    /// Если все погибли — смотрим глазами своего героя-призрака.
+    /// Обзор у отряда общий: объединяем то, что видит каждый герой. Призрак видит недалеко, зато разведывает сквозь стены.
     /// </summary>
     private void UpdateFov()
     {
-        var watchers = LivingHeroes.Any() ? LivingHeroes : new[] { _localHero };
         _visible = new HashSet<Vector2I>();
-        foreach (var hero in watchers)
-            _visible.UnionWith(_map.ComputeFov(hero.GridPos, FovRadius + hero.Bonuses.Vision));
+        foreach (var hero in _heroes)
+            _visible.UnionWith(_map.ComputeFov(hero.GridPos, hero.IsGhost ? GhostFov : FovRadius + hero.Bonuses.Vision));
         foreach (var cell in _visible)
             _map.Explored[cell.X, cell.Y] = true;
 
@@ -1155,6 +1169,8 @@ public partial class GameManager : Node3D, IGameWorld
             chest.Visible = _map.Explored[cell.X, cell.Y];
         foreach (var (cell, shrine) in _shrines)
             shrine.Visible = _map.Explored[cell.X, cell.Y];
+        for (int i = 0; i < _plates.Count; i++)
+            _plateNodes[i].Visible = _map.Explored[_plates[i].X, _plates[i].Y];
 
         var visibleEnemies = _enemies.Where(enemy => enemy.Visible).Select(enemy => enemy.GridPos).ToList();
         var markers = _floorItems.Select(pair => (pair.Key, pair.Value.MapColor)).ToList();
@@ -1174,7 +1190,6 @@ public partial class GameManager : Node3D, IGameWorld
         _hud.UpdateParty(_heroes, _localHero);
         foreach (var hero in _heroes)
             hero.UpdateNameplate(!IsSinglePlayer && !IsLocalHero(hero));
-        _hud.SetWaiting(_localHero.HasActed && !_gameOver ? WaitingFor() : null);
         _hud.SetStairsWaiting(StairsWaitingNames());
         _hud.UpdateBoss(_boss);
     }

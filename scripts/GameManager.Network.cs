@@ -46,6 +46,10 @@ public partial class GameManager
         _net.Disconnected += OnNetDisconnected;
         _net.ResyncRequested += OnResyncRequested;
         _net.SnapshotReceived += OnSnapshotReceived;
+        _net.FindOfflineHero = FindOfflineHero;
+        _net.PlayerRejoined += OnPlayerRejoined;
+        _net.RejoinAccepted += heroId => _rejoinHeroId = heroId;
+        _net.RunResumed += OnRunResumed;
 
         _lobby = new LobbyPanel();
         AddChild(_lobby);
@@ -67,6 +71,7 @@ public partial class GameManager
         };
         _lobby.ClassChosen += index => _net.SetMyClass(index);
         _lobby.StartRequested += difficulty => _net.StartGame(difficulty.Id);
+        _lobby.ResumeRequested += ResumeSavedRun;
         _lobby.LeaveRequested += LeaveLobby;
         _lobby.BackRequested += CloseLobby;
     }
@@ -175,6 +180,7 @@ public partial class GameManager
         for (int i = 0; i < members.Count; i++)
         {
             _heroOwners[i] = members[i].PeerId;
+            _heroPlayers[i] = members[i].Name;
             bool mine = members[i].PeerId == _net.MyId;
             party.Add(new HeroSpec(ClassCatalog.All[members[i].ClassIndex], members[i].Name, Bot: mine && _netTestRole != null));
         }
@@ -213,12 +219,6 @@ public partial class GameManager
 
         if (_actionInFlight)
             return;
-        if (action.SpendsTurn && (_localHero.IsGhost || _localHero.HasActed))
-        {
-            if (!_localHero.IsGhost)
-                _hud.SetWaiting(WaitingFor()); // заведомо пустой ход по сети не гоняем
-            return;
-        }
         _actionInFlight = true;
         _afterLocalAction = after;
         _net.SendAction(action);
@@ -260,8 +260,19 @@ public partial class GameManager
             case HeroActionKind.Mystery:
                 OpenMysteryBox(hero);
                 return false;
+            case HeroActionKind.GiveItem:
+                GiveItem(hero, action.Index);
+                return false;
+            case HeroActionKind.GiveGold:
+                GiveGold(hero);
+                return false;
             case HeroActionKind.Leave:
-                RemoveHero(hero);
+                SetHeroOffline(hero);
+                return false;
+            case HeroActionKind.Rejoin:
+                hero.IsOffline = false;
+                _hud.AddMessage($"{hero.DisplayName} вернулся в игру!", GoodColor);
+                UpdateHud();
                 return false;
             default:
                 return PerformHeroAction(hero, action);
@@ -314,6 +325,94 @@ public partial class GameManager
         CheckNetTestProgress();
     }
 
+    // ---------- Возвращение и продолжение забега ----------
+
+    /// <summary>Вернувшийся клиент: номер его героя, пока идёт снимок мира.</summary>
+    private int? _rejoinHeroId;
+
+    /// <summary>Герой → имя игрока из лобби (у героев с одинаковым именем номер в имени).</summary>
+    private readonly Dictionary<int, string> _heroPlayers = new();
+
+    /// <summary>
+    /// Герой игрока с таким именем. Не только отключённый: сеть замечает обрыв не сразу, а игрок
+    /// перезаходит быстро, поэтому новое соединение сразу заменяет старое, уже мёртвое.
+    /// </summary>
+    private int? FindOfflineHero(string name)
+    {
+        foreach (var hero in _heroes)
+            if (_heroPlayers.GetValueOrDefault(hero.Id) == name)
+                return hero.Id;
+        return null;
+    }
+
+    /// <summary>Хост: герой снова под управлением игрока, всем — действие и общий снимок.</summary>
+    private void OnPlayerRejoined(long peerId, int heroId)
+    {
+        _heroOwners[heroId] = peerId;
+        _net.Broadcast(heroId, HeroAction.Rejoin, StateChecksum());
+        _net.BroadcastSnapshot(SaveSystem.Pack(CreateNetworkSnapshot()));
+    }
+
+    /// <summary>Хост: продолжить сохранённый забег. Каждый игрок лобби находит своего героя по имени.</summary>
+    private void ResumeSavedRun()
+    {
+        var data = SaveSystem.LoadNetwork();
+        if (data == null)
+        {
+            _lobby.SetRoomStatus("Сохранённый забег не найден или повреждён.");
+            return;
+        }
+        var stranger = _net.Members.FirstOrDefault(member => data.Party.All(save => save.Player != member.Name));
+        if (stranger != null)
+        {
+            _lobby.SetRoomStatus($"В сохранённом забеге нет игрока «{stranger.Name}»: нужно то же имя, что и раньше.");
+            return;
+        }
+        foreach (var save in data.Party)
+        {
+            var member = _net.Members.FirstOrDefault(other => other.Name == save.Player);
+            save.Peer = member?.PeerId ?? 0;
+            save.Offline = member == null; // кого нет в лобби, тот сможет зайти позже
+        }
+        _net.ResumeRun(SaveSystem.Pack(data));
+    }
+
+    private void OnRunResumed(byte[] snapshot)
+    {
+        var data = SaveSystem.Unpack(snapshot);
+        EnterNetworkWorld(data, data.Party.First(save => save.Peer == _net.MyId).Id);
+        _hud.AddMessage($"Забег продолжается. Этаж {_floor}.", InfoColor);
+    }
+
+    /// <summary>Попасть в уже идущий сетевой мир: вернувшись в отряд или продолжая сохранённый забег.</summary>
+    private void EnterNetworkWorld(SaveData data, int heroId)
+    {
+        _isNetworkGame = true;
+        _netPreparing = false;
+        _actionInFlight = false;
+        _afterLocalAction = null;
+        _resyncPending = false;
+        _gameOver = false;
+        _victory = false;
+        _state = GameState.Playing;
+        _lobby.Visible = false;
+        _tutorialPanel.Visible = false;
+        _mainMenu.Visible = false;
+        _hud.Visible = true;
+        _hud.HideGameOver();
+        _hud.ClearMessages();
+        _camera.MenuMode = false;
+        RestoreNetworkSnapshot(data, heroId);
+        UiTheme.SetAccent(_localHero.Class.Color.Lightened(0.15f));
+    }
+
+    /// <summary>Хост сохраняет забег на каждом новом этаже: продолжить можно из лобби.</summary>
+    private void SaveNetworkRun()
+    {
+        if (_isNetworkGame && _net.IsHost && !_gameOver)
+            SaveSystem.SaveNetwork(CreateNetworkSnapshot());
+    }
+
     private void ReportDesync(int hostChecksum)
     {
         _desyncs++;
@@ -348,6 +447,9 @@ public partial class GameManager
         {
             Id = hero.Id,
             Name = hero.DisplayName,
+            Player = _heroPlayers.GetValueOrDefault(hero.Id, hero.DisplayName),
+            Peer = _heroOwners.GetValueOrDefault(hero.Id),
+            Offline = hero.IsOffline,
             HasActed = hero.HasActed,
             PendingLevelUps = hero.PendingLevelUps,
             State = hero.CreateSave(),
@@ -355,14 +457,24 @@ public partial class GameManager
         data.RngState = _rng.State;
         data.RngCalls = _rng.Calls;
         data.DescentRequested = _descentRequested;
+        data.RoundActions = _roundActions;
+        data.Plates = _plates.Select(cell => new[] { cell.X, cell.Y }).ToList();
         return data;
     }
 
     private void OnSnapshotReceived(byte[] snapshot)
     {
+        if (_rejoinHeroId.HasValue)
+        {
+            int heroId = _rejoinHeroId.Value;
+            _rejoinHeroId = null;
+            EnterNetworkWorld(SaveSystem.Unpack(snapshot), heroId);
+            _hud.AddMessage("Ты снова в отряде!", GoodColor);
+            return;
+        }
         if (!_isNetworkGame)
             return;
-        RestoreNetworkSnapshot(SaveSystem.Unpack(snapshot));
+        RestoreNetworkSnapshot(SaveSystem.Unpack(snapshot), _localHero.Id);
         _resyncPending = false;
         _resyncs++;
         GD.Print($"СЕТЬ: {_netTestRole ?? "игра"}: мир восстановлен по снимку хоста, контрольная сумма {StateChecksum():X8}");
@@ -373,10 +485,9 @@ public partial class GameManager
     /// Пересобрать мир из снимка: отряд (с теми же номерами героев), карту, врагов, предметы,
     /// генератор случайности. Своё окно (инвентарь, торговец) закрываем — его содержимое устарело.
     /// </summary>
-    private void RestoreNetworkSnapshot(SaveData data)
+    private void RestoreNetworkSnapshot(SaveData data, int localId)
     {
-        int localId = _localHero.Id;
-        var bots = _heroes.ToDictionary(hero => hero.Id, hero => hero.IsBot);
+        bool bot = _netTestRole != null;
 
         ClearLevelObjects();
         _floor = data.Floor;
@@ -385,9 +496,10 @@ public partial class GameManager
         _difficulty = Difficulties.Get(data.Difficulty);
         _rng = GameRandom.FromState(data.RngState, data.RngCalls);
         _descentRequested = data.DescentRequested;
+        _roundActions = data.RoundActions;
 
         var party = data.Party
-            .Select(save => new HeroSpec(ClassCatalog.Get(save.State.Class), save.Name, bots.GetValueOrDefault(save.Id)))
+            .Select(save => new HeroSpec(ClassCatalog.Get(save.State.Class), save.Name, bot && save.Id == localId))
             .ToList();
         CreateParty(party, Math.Max(0, data.Party.FindIndex(save => save.Id == localId)));
 
@@ -402,9 +514,14 @@ public partial class GameManager
             hero.SetDisplayName(save.Name);
             hero.RestoreSave(save.State, allowDead: true);
             hero.HasActed = save.HasActed;
+            hero.IsOffline = save.Offline;
+            _heroOwners[save.Id] = save.Peer;
+            _heroPlayers[save.Id] = save.Player;
             hero.PendingLevelUps = save.PendingLevelUps;
         }
         RestoreLevelObjects(data);
+        foreach (var plate in data.Plates ?? new List<int[]>())
+            PlacePlate(new Vector2I(plate[0], plate[1]));
 
         if (_state is GameState.Inventory or GameState.Shop or GameState.LevelUp)
         {
@@ -434,6 +551,7 @@ public partial class GameManager
 
             Add(_floor);
             Add(_turns);
+            Add(_roundActions);
             Add(_kills);
             Add(_rng.Calls);
             foreach (var hero in _heroes)
@@ -469,6 +587,7 @@ public partial class GameManager
             Add(_floorItems.Count);
             Add(_chests.Count);
             Add(_shrines.Count);
+            Add(_plates.Count);
             Add(_merchant?.Stock.Count ?? -1);
             Add(_merchant?.Stock.Sum(item => (long)item.Price) ?? -1);
             Add(_descentRequested ? 1 : 0);
@@ -488,23 +607,22 @@ public partial class GameManager
                 _net.Broadcast(heroId, HeroAction.Leave, StateChecksum());
     }
 
-    /// <summary>Герой покидает отряд. Если остальные уже сходили, раунд заканчивается без него.</summary>
-    private void RemoveHero(Player hero)
+    /// <summary>Игрок потерял связь: герой ждёт его на месте, а раунд больше на него не рассчитан.</summary>
+    private void SetHeroOffline(Player hero)
     {
         if (hero == _localHero)
-            return; // своего героя по сети не убирают
-        _heroes.Remove(hero);
-        hero.QueueFree();
-        _hud.AddMessage($"{hero.DisplayName} покидает игру.", InfoColor);
+            return; // своего героя по сети не отключают
+        hero.IsOffline = true;
+        _hud.AddMessage($"{hero.DisplayName} потерял связь. Зайдёт с тем же именем — вернётся к герою.", InfoColor);
 
-        if (!LivingHeroes.Any())
+        if (!LivingHeroes.Any(other => !other.IsOffline))
         {
             GameOver("отряд остался без живых героев");
             return;
         }
         if (TryDescend())
             return; // ушёл как раз тот, кого ждали у лестницы
-        if (LivingHeroes.All(other => other.HasActed))
+        if (_roundActions >= ActiveHeroCount)
         {
             EndRound();
             return;
@@ -534,7 +652,7 @@ public partial class GameManager
         _shopPanel.Visible = false;
         _levelUpPanel.Visible = false;
         _hud.Visible = true;
-        _hud.ShowGameOver($"{reason}\nЗабег прерван.\n\nEsc — в главное меню");
+        _hud.ShowGameOver($"{reason}\nЧтобы вернуться к герою, подключись снова с тем же именем.\n\nEsc — в главное меню");
         if (_netTestRole != null)
         {
             GD.Print($"СЕТЬ: {_netTestRole}: {reason}");

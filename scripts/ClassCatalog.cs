@@ -10,6 +10,7 @@ public enum PlayerClass
     Warrior,
     Ranger,
     Mage,
+    Priest,
 }
 
 public enum SkillId
@@ -20,6 +21,8 @@ public enum SkillId
     ArrowRain,
     Fireball,
     FrostNova,
+    Smite,
+    Mend,
 }
 
 /// <summary>Активная способность: срабатывает по клавише F или G и потом перезаряжается за Cooldown атак героя.</summary>
@@ -45,6 +48,9 @@ public enum PerkEffect
     Pyromancer, // огненный шар взрывается шире
     Arcane,    // убийство заряжает способности
     Sentinel,  // стойка держит втрое больше
+    Grace,     // исцеление лечит ещё и всех рядом с целью
+    Faith,     // кара бьёт сильнее и лечит вдвое больше
+    Shatter,   // заморозка мага делает врага хрупким и для него самого
 }
 
 public static class ClassCatalog
@@ -82,7 +88,18 @@ public static class ClassCatalog
             new SkillDef(SkillId.FrostNova, "Ледяная нова", "урон и заморозка всех в радиусе 2", 4),
         });
 
-    public static readonly ClassDef[] All = { Warrior, Ranger, Mage };
+    public static readonly ClassDef Priest = new(
+        PlayerClass.Priest, "Жрец",
+        "Лечит союзников и бьёт светом. Сильнее всего в отряде.",
+        MaxHp: 30, Attack: 2, new Color(0.95f, 0.8f, 0.4f),
+        new[] { ItemCatalog.Dagger, ItemCatalog.HealthPotion, ItemCatalog.HealthPotion },
+        new[]
+        {
+            new SkillDef(SkillId.Smite, "Кара", "свет бьёт ближайшего врага и лечит всех рядом с тобой", 1),
+            new SkillDef(SkillId.Mend, "Исцеление", "лечит самого раненого героя отряда на 35%", 3),
+        });
+
+    public static readonly ClassDef[] All = { Warrior, Ranger, Mage, Priest };
 
     public static ClassDef Get(PlayerClass playerClass) => All[(int)playerClass];
 
@@ -105,6 +122,9 @@ public static class ClassCatalog
         new("Рикошет", "меткий выстрел попадает и в ближайшую к цели", default, Only: PlayerClass.Ranger, Effect: PerkEffect.Ricochet),
         new("Охотник", "+4 к удару по невредимому врагу", default, Only: PlayerClass.Ranger, Effect: PerkEffect.Hunter),
         new("Пиромант", "огненный шар взрывается шире", default, Only: PlayerClass.Mage, Effect: PerkEffect.Pyromancer),
+        new("Ледяной осколок", "замороженные враги получают от тебя двойной урон", default, Only: PlayerClass.Mage, Effect: PerkEffect.Shatter),
+        new("Благодать", "исцеление лечит и всех рядом с целью", default, Only: PlayerClass.Priest, Effect: PerkEffect.Grace),
+        new("Свет веры", "+3 к урону кары, и лечит она вдвое сильнее", default, Only: PlayerClass.Priest, Effect: PerkEffect.Faith),
     };
 
     /// <summary>«1 атаку», «3 атаки», «5 атак» — русское окончание зависит от числа.</summary>

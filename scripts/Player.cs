@@ -52,6 +52,16 @@ public partial class Player : Actor
     /// <summary>Защитная стойка: герой пропустил ход и держит оборону до своего следующего действия.</summary>
     public bool IsGuarding { get; set; }
 
+    // Отряд: подъём союзника, силы призрака и итоги забега
+    public int ReviveProgress { get; set; }
+
+    /// <summary>Игрок потерял связь: герой стоит на месте и ждёт, враги его не трогают.</summary>
+    public bool IsOffline { get; set; }
+    public int GhostReadyRound { get; set; }
+    public int DamageDealt { get; set; }
+    public int KillsMade { get; set; }
+    public int RevivesMade { get; set; }
+
     /// <summary>Сколько улучшений этот герой ещё должен выбрать (за раунд можно получить несколько уровней).</summary>
     public int PendingLevelUps { get; set; }
 
@@ -65,7 +75,6 @@ public partial class Player : Actor
     /// <summary>
     /// Табличка с именем над героем — для союзников в отряде. Label3D — текст в 3D-мире;
     /// Billboard поворачивает его к камере, NoDepthTest не даёт стенам его закрывать.
-    /// Сходивший в этом раунде союзник подписан бледнее — видно, кого ждём.
     /// </summary>
     public void UpdateNameplate(bool show)
     {
@@ -77,9 +86,9 @@ public partial class Player : Actor
         }
         _nameplate ??= CreateNameplate();
         _nameplate.Visible = true;
-        _nameplate.Text = IsGhost ? $"{DisplayName} (призрак)" : DisplayName;
+        _nameplate.Text = IsOffline ? $"{DisplayName} (нет связи)" : IsGhost ? $"{DisplayName} (призрак)" : DisplayName;
         var color = IsGhost ? new Color(GhostColor, 0.8f) : Class.Color.Lightened(0.45f);
-        _nameplate.Modulate = HasActed && !IsGhost ? new Color(color, 0.45f) : color;
+        _nameplate.Modulate = color;
     }
 
     private Label3D CreateNameplate()
@@ -99,9 +108,10 @@ public partial class Player : Actor
     }
 
     /// <summary>Отряд спустился на новый этаж — призрак оживает с половиной здоровья.</summary>
-    public void Revive()
+    public void Revive(float share = 0.5f)
     {
-        Hp = Math.Max(1, MaxHp / 2);
+        Hp = Math.Max(1, (int)(MaxHp * share));
+        ReviveProgress = 0;
         BodyMaterial.AlbedoColor = DisplayColor;
     }
 
@@ -247,6 +257,12 @@ public partial class Player : Actor
                 _gear.AddChild(Part(new CylinderMesh { TopRadius = 0.04f, BottomRadius = 0.19f, Height = 0.28f }, dark, new Vector3(0f, 0.66f, -0.02f)));
                 _gear.AddChild(Part(new TorusMesh { InnerRadius = 0.3f, OuterRadius = 0.34f }, wood, new Vector3(0.3f, 0.05f, 0.06f), rotationDegrees: new Vector3(0f, 0f, 90f)));
                 _gear.AddChild(Part(new BoxMesh { Size = new Vector3(0.12f, 0.36f, 0.12f) }, wood.Darkened(0.2f), new Vector3(-0.12f, 0.15f, -0.24f), rotationDegrees: new Vector3(15f, 0f, 0f)));
+                break;
+
+            case PlayerClass.Priest:
+                _gear.AddChild(Part(new TorusMesh { InnerRadius = 0.17f, OuterRadius = 0.2f }, Class.Color.Lightened(0.3f), new Vector3(0f, 0.8f, 0f), glow: 2.5f));
+                _gear.AddChild(Part(new BoxMesh { Size = new Vector3(0.05f, 0.9f, 0.05f) }, wood, new Vector3(0.32f, 0.08f, 0.04f)));
+                _gear.AddChild(Part(new BoxMesh { Size = new Vector3(0.26f, 0.05f, 0.05f) }, Class.Color, new Vector3(0.32f, 0.38f, 0.04f), glow: 1.5f));
                 break;
 
             case PlayerClass.Mage:

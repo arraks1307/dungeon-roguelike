@@ -68,6 +68,17 @@ public partial class GameManager
         }
     }
 
+    /// <summary>Удар босса по площади: достаётся всем, кто не успел отойти.</summary>
+    public void EnemySlam(Enemy enemy, int radius, float power)
+    {
+        Effects.Burst(this, enemy.GridPos, enemy.Type.Color, 60);
+        _sound.Play(Sound.Kill);
+        _camera.Shake(0.35f);
+        foreach (var hero in LivingHeroes.ToList())
+            if (ChebyshevDistance(hero.GridPos, enemy.GridPos) <= radius && !_gameOver)
+                EnemyAttacksPlayer(enemy, hero, ranged: true, power);
+    }
+
     public Enemy FindHurtAlly(Enemy healer, int range) => _enemies
         .Where(other => other != healer && other.Hp < other.MaxHp && ChebyshevDistance(other.GridPos, healer.GridPos) <= range)
         .OrderBy(other => other.Hp)
@@ -148,7 +159,7 @@ public partial class GameManager
     private string ShrineText(Shrine shrine) => shrine.Kind switch
     {
         ShrineKind.Fountain => "Фонтан: лечит половину здоровья.",
-        ShrineKind.BloodAltar => "Алтарь крови: заберёт треть здоровья и навсегда даст +1 к атаке.",
+        ShrineKind.BloodAltar => IsSinglePlayer ? "Алтарь крови: заберёт треть здоровья и навсегда даст +1 к атаке." : "Алтарь крови: у всего отряда заберёт треть здоровья и навсегда даст +1 к атаке. Нужны голоса всех.",
         _ => $"Золотой алтарь: за {GoldAltarPrice} золота даст хорошую вещь.",
     };
 
@@ -177,18 +188,29 @@ public partial class GameManager
                 break;
 
             case ShrineKind.BloodAltar:
-                int cost = hero.MaxHp / 3;
-                if (hero.Hp <= cost)
+                // Сделка на весь отряд: кровь отдают все, поэтому решают голосованием
+                shrine.Votes.Add(hero.Id);
+                int needed = ActiveHeroCount;
+                if (shrine.Votes.Count < needed)
                 {
-                    if (IsLocalHero(hero))
-                        _hud.AddMessage("Алтарь убьёт тебя: сначала подлечись.", DamageColor);
+                    _hud.AddMessage($"{hero.DisplayName} голосует за сделку с алтарём: {shrine.Votes.Count} из {needed}.", DamageColor);
+                    return true;
+                }
+                if (LivingHeroes.Any(other => other.Hp <= other.MaxHp / 3))
+                {
+                    shrine.Votes.Clear();
+                    _hud.AddMessage("Алтарь убьёт кого-то из отряда: сначала подлечитесь.", DamageColor);
                     return false;
                 }
-                hero.TakeDamage(cost);
-                hero.AddPermanentAttack(1);
-                Effects.FloatingText(this, hero.GridPos, $"-{cost}", DamageColor);
+                foreach (var ally in LivingHeroes)
+                {
+                    int cost = ally.MaxHp / 3;
+                    ally.TakeDamage(cost);
+                    ally.AddPermanentAttack(1);
+                    Effects.FloatingText(this, ally.GridPos, $"-{cost}", DamageColor);
+                }
                 _sound.Play(Sound.Summon);
-                Tell(hero, "Алтарь принимает кровь: +1 к атаке навсегда.", $"{hero.DisplayName} отдаёт кровь алтарю.", DamageColor);
+                _hud.AddMessage("Алтарь принимает кровь: +1 к атаке навсегда.", DamageColor);
                 break;
 
             default:

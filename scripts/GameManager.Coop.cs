@@ -150,7 +150,7 @@ public partial class GameManager
     }
 
     private List<Player> HeroesFarFromStairs() => LivingHeroes
-        .Where(hero => ChebyshevDistance(hero.GridPos, _map.StairsPos) > StairsGatherRadius)
+        .Where(hero => !hero.IsOffline && ChebyshevDistance(hero.GridPos, _map.StairsPos) > StairsGatherRadius)
         .ToList();
 
     /// <summary>Если спуск уже запрошен и весь отряд рядом с лестницей — спускаемся. true — новый этаж.</summary>
