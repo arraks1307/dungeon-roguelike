@@ -19,6 +19,7 @@ public partial class GameManager
     private NetSession _net;
     private LobbyPanel _lobby;
     private bool _isNetworkGame;
+    private bool _netPreparing; // хост начал забег, идёт обучение; настоящего мира ещё нет
 
     /// <summary>Случайность «для этого компьютера»: какие улучшения предложить. Мир от неё не зависит.</summary>
     private readonly Random _uiRng = new();
@@ -37,6 +38,7 @@ public partial class GameManager
         AddChild(_net);
         _net.LobbyChanged += OnLobbyChanged;
         _net.StatusChanged += OnNetStatus;
+        _net.PreparingRun += OnNetPreparing;
         _net.GameStarted += OnNetGameStarted;
         _net.ActionReceived += OnNetActionReceived;
         _net.ActionBroadcast += OnNetActionBroadcast;
@@ -101,8 +103,8 @@ public partial class GameManager
 
     private void OnLobbyChanged()
     {
-        if (_state != GameState.Menu && !_gameOver)
-            return; // во время забега лобби не показываем
+        if (_netPreparing || _state != GameState.Menu && !_gameOver)
+            return; // во время забега и обучения лобби не показываем
         if (!_lobby.IsInRoom && _net.IsActive)
             _lobby.OpenRoom(_net.IsHost); // клиент: хост принял нас — открываем комнату
         _lobby.UpdateMembers(_net.Members, _net.MyId);
@@ -118,9 +120,46 @@ public partial class GameManager
             _lobby.SetConnectStatus(status);
     }
 
+    /// <summary>
+    /// Хост нажал «Начать»: каждый проходит обучение у себя. Мир обучения локальный и не сетевой,
+    /// поэтому _isNetworkGame пока false: настоящий мир появится в OnNetGameStarted.
+    /// </summary>
+    private void OnNetPreparing()
+    {
+        _netPreparing = true;
+        _isNetworkGame = false;
+        _lobby.Visible = false;
+        _state = GameState.Menu;
+        _gameOver = false;
+        _hud.HideGameOver();
+        CloseLocalWindows();
+        _hud.Visible = false;
+
+        var me = _net.Members.First(member => member.PeerId == _net.MyId);
+        var playerClass = ClassCatalog.All[me.ClassIndex];
+        if (_netTestRole == null)
+            OfferTutorial(playerClass, me.Name, WaitForParty);
+        else if (_netTestTutorial)
+            StartTutorial(playerClass, me.Name, WaitForParty);
+        else
+            _net.SendReady();
+    }
+
+    /// <summary>Своё обучение закончено: сообщаем хосту и ждём остальных.</summary>
+    private void WaitForParty()
+    {
+        _state = GameState.Menu;
+        _hud.Visible = false;
+        if (_netTestRole == null)
+            _tutorialPanel.OpenWaiting(ShowMainMenu);
+        _net.SendReady();
+    }
+
     /// <summary>Хост начал забег: у всех одно зерно — значит, один и тот же мир.</summary>
     private void OnNetGameStarted(int seed, int difficulty, List<LobbyMember> members)
     {
+        _netPreparing = false;
+        _tutorialPanel.Visible = false;
         _lobby.Visible = false;
         _isNetworkGame = true;
         _rng = new GameRandom(seed);
@@ -128,6 +167,7 @@ public partial class GameManager
         _afterLocalAction = null;
         _desyncs = 0;
         _resyncs = 0;
+        _tradeCount = 0;
         _resyncPending = false;
 
         _heroOwners.Clear();
@@ -148,6 +188,7 @@ public partial class GameManager
         if (_net.IsActive)
             _net.Close();
         _isNetworkGame = false;
+        _netPreparing = false;
         _actionInFlight = false;
         _afterLocalAction = null;
     }
@@ -396,7 +437,12 @@ public partial class GameManager
                 Add(hero.Gold);
                 Add(hero.Level);
                 Add(hero.Experience);
-                Add(hero.Inventory.Items.Count);
+                foreach (var item in hero.Inventory.Items.Concat(hero.Inventory.Equipped))
+                {
+                    Add(item.Name.Length); // длина, а не хеш строки: хеш строк в .NET у каждого запуска свой
+                    Add(item.Count);
+                    Add((int)item.Rarity);
+                }
                 Add(hero.HasActed ? 1 : 0);
                 Add(hero.PendingLevelUps);
             }
@@ -406,9 +452,12 @@ public partial class GameManager
                 Add(enemy.GridPos.Y);
                 Add(enemy.Hp);
             }
+            // Сумма не зависит от порядка: словарь у всех один, но так надёжнее и после восстановления
+            Add(_floorItems.Keys.Sum(cell => (long)cell.X * 64 + cell.Y));
             Add(_floorItems.Count);
             Add(_chests.Count);
             Add(_merchant?.Stock.Count ?? -1);
+            Add(_merchant?.Stock.Sum(item => (long)item.Price) ?? -1);
             Add(_descentRequested ? 1 : 0);
             return (int)(hash ^ (hash >> 32));
         }
@@ -454,6 +503,14 @@ public partial class GameManager
     /// <summary>Клиент: связь с хостом пропала посреди забега.</summary>
     private void OnNetDisconnected(string reason)
     {
+        if (_netPreparing)
+        {
+            // Хост пропал, пока шло обучение: забега ещё нет, возвращаем в окно подключения
+            ShowMainMenu();
+            OpenLobby();
+            _lobby.SetConnectStatus(reason);
+            return;
+        }
         if (!_isNetworkGame)
             return;
         _isNetworkGame = false;

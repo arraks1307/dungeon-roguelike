@@ -134,7 +134,7 @@ public partial class GameManager : Node3D, IGameWorld
 
         int damage = RollDamage(enemy, target);
         target.TakeDamage(damage);
-        if (_godMode)
+        if (IsInvulnerable)
             target.Heal(damage);
         Effects.FloatingText(this, target.GridPos, $"-{damage}", DamageColor);
         _sound.Play(Sound.Hurt);
@@ -249,6 +249,7 @@ public partial class GameManager : Node3D, IGameWorld
 
         SetupNetwork();
         SetupCoop();
+        SetupTutorial();
         ShowMainMenu();
         if (_netTestRole != null)
             StartNetTest();
@@ -295,6 +296,12 @@ public partial class GameManager : Node3D, IGameWorld
 
         switch (key.PhysicalKeycode)
         {
+            case Key.Escape when _tutorialPanel.Visible:
+                _tutorialPanel.Cancel();
+                break;
+            case Key.Tab when InTutorial && _state == GameState.Playing:
+                FinishTutorial();
+                break;
             case Key.Escape when _state == GameState.Menu && _lobby.Visible:
                 if (_lobby.IsInRoom)
                     LeaveLobby();
@@ -323,7 +330,10 @@ public partial class GameManager : Node3D, IGameWorld
                     case GameState.Playing: Pause(); break;
                     case GameState.Inventory: CloseInventory(); break;
                     case GameState.Shop: CloseShop(); break;
-                    case GameState.Paused: Resume(); break;
+                    case GameState.Paused:
+                        if (!_pauseMenu.CloseControls())
+                            Resume();
+                        break;
                     case GameState.Chat: CloseChat(); break;
                     case GameState.GameOver: ShowMainMenu(); break;
                 }
@@ -344,7 +354,7 @@ public partial class GameManager : Node3D, IGameWorld
                 if (_net.IsActive)
                     RestartNetworkRun();
                 else
-                    StartRun(_partySpec, _difficulty); // заново тем же составом и на той же сложности
+                    OfferTutorial(_partySpec[0].Class, null, () => StartRun(_partySpec, _difficulty)); // тем же составом и на той же сложности
                 break;
             case Key.M when _state == GameState.Playing:
                 _hud.ToggleMinimap();
@@ -425,6 +435,7 @@ public partial class GameManager : Node3D, IGameWorld
     private void ShowMainMenu()
     {
         LeaveNetwork(); // из сетевой игры выход в меню — это выход из отряда
+        AbandonTutorial();
         _state = GameState.Menu;
         _gameOver = false;
         ClearLevelObjects();
@@ -465,7 +476,8 @@ public partial class GameManager : Node3D, IGameWorld
     private void StartNewGame(ClassDef playerClass, DifficultyDef difficulty)
     {
         _isNetworkGame = false;
-        StartRun(new List<HeroSpec> { new(playerClass) }, difficulty);
+        _classSelect.Visible = false;
+        OfferTutorial(playerClass, null, () => StartRun(new List<HeroSpec> { new(playerClass) }, difficulty));
     }
 
     private void StartRun(List<HeroSpec> party, DifficultyDef difficulty, int localIndex = 0)
@@ -484,7 +496,7 @@ public partial class GameManager : Node3D, IGameWorld
         _hud.HideGameOver();
         _hud.ClearMessages();
         _hud.CloseChat();
-        _hud.SetNetworkHints(_isNetworkGame);
+        _hud.HideTutorial();
         _camera.MenuMode = false;
 
         CreateParty(party, localIndex);
@@ -495,13 +507,13 @@ public partial class GameManager : Node3D, IGameWorld
 
         NextFloor();
         string who = IsSinglePlayer ? $"{_localHero.Class.Name} спускается" : $"Отряд из {_heroes.Count} героев спускается";
-        _hud.AddMessage($"{who} в подземелье. Найди золотую лестницу. F и G — способности.", InfoColor);
+        _hud.AddMessage($"{who} в подземелье.", InfoColor);
     }
 
     private void Pause()
     {
         _state = GameState.Paused;
-        _pauseMenu.Open(_isNetworkGame);
+        _pauseMenu.Open(InTutorial ? "Выйти в меню" : _isNetworkGame ? "Покинуть отряд и выйти в меню" : "Сохранить и выйти в меню");
     }
 
     private void Resume()
@@ -1126,6 +1138,7 @@ public partial class GameManager : Node3D, IGameWorld
 
     private void UpdateHud()
     {
+        UpdateTutorial(); // первым: шаг обучения может дать герою зелье или рану
         _hud.UpdateStats(_localHero, _floor, _kills);
         _hud.UpdateParty(_heroes, _localHero);
         foreach (var hero in _heroes)

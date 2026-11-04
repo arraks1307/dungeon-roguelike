@@ -68,6 +68,8 @@ public partial class GameManager
         string name = hero?.DisplayName ?? "Игрок";
         var color = hero?.Class.Color.Lightened(0.5f) ?? UiTheme.Text;
         _hud.AddMessage($"{name}: {text}", color);
+        if (_netTestRole != null)
+            GD.Print($"СЕТЬ: {_netTestRole}: чат: {name}: {text}");
         _sound.Play(Sound.UiClick);
     }
 
@@ -107,6 +109,8 @@ public partial class GameManager
         var hero = HeroOfPeer(peerId);
         var color = hero?.Class.Color.Lightened(0.3f) ?? InfoColor;
         Effects.Ping(this, cell, color);
+        if (_netTestRole != null)
+            GD.Print($"СЕТЬ: {_netTestRole}: метка от {hero?.DisplayName} на клетке {cell}");
         _hud.AddPing(cell, color);
         _sound.Play(Sound.Secret);
         if (hero != null && !IsLocalHero(hero))
@@ -122,6 +126,12 @@ public partial class GameManager
     private void OnHeroReachedStairs(Player hero)
     {
         _sound.Play(Sound.Stairs);
+        if (InTutorial)
+        {
+            // Откладываем: сейчас мы ещё внутри хода героя, а обучение заменит и героя, и карту
+            Callable.From(FinishTutorial).CallDeferred();
+            return;
+        }
         if (IsSinglePlayer)
         {
             NextFloor();

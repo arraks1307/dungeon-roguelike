@@ -36,10 +36,14 @@ public partial class Hud : CanvasLayer
     private Label _waitingLabel;
     private Label _stairsLabel;
     private LineEdit _chatEdit;
-    private Label _hintLabel;
+    private PanelContainer _tutorialCard;
+    private Label _tutorialProgress;
+    private Label _tutorialTitle;
+    private Label _tutorialText;
 
     public event System.Action<string> ChatSubmitted;
     public event System.Action ChatCancelled;
+    public event System.Action TutorialSkipRequested;
 
     public override void _Ready()
     {
@@ -115,10 +119,6 @@ public partial class Hud : CanvasLayer
         };
         column.AddChild(_chatEdit);
 
-        _hintLabel = Ui.CreateMutedLabel(13);
-        column.AddChild(_hintLabel);
-        SetNetworkHints(false);
-
         // Быстрые слоты в правом нижнем углу: якоря справа снизу, растут влево
         _hotbar = new HBoxContainer
         {
@@ -131,6 +131,7 @@ public partial class Hud : CanvasLayer
         root.AddChild(_hotbar);
 
         CreateBossBar(root);
+        CreateTutorialCard(root);
         CreateGameOverScreen(root);
     }
 
@@ -392,11 +393,47 @@ public partial class Hud : CanvasLayer
                 : "Отряд у лестницы";
     }
 
-    /// <summary>Подсказка по клавишам внизу экрана; в сетевой игре добавляются чат и метки.</summary>
-    public void SetNetworkHints(bool network) => _hintLabel.Text =
-        "WASD / стрелки — ход и атака  •  Q E Z C — диагонали  •  Пробел — ждать  •  " +
-        "F G — способности  •  I — инвентарь  •  1–5 — слоты  •  M — карта  •  Esc — пауза" +
-        (network ? "  •  Enter — чат  •  ПКМ — метка" : "");
+    /// <summary>Карточка текущего шага обучения: появляется только на уровне обучения.</summary>
+    private void CreateTutorialCard(Control root)
+    {
+        _tutorialCard = new PanelContainer
+        {
+            AnchorLeft = 0.5f, AnchorRight = 0.5f,
+            OffsetLeft = -300f, OffsetRight = 300f, OffsetTop = 20f,
+            GrowHorizontal = Control.GrowDirection.Both,
+            Visible = false,
+        };
+        _tutorialCard.AddThemeStyleboxOverride("panel", UiTheme.Glass(0.8f, 14, 16f));
+        root.AddChild(_tutorialCard);
+
+        var rows = new VBoxContainer();
+        rows.AddThemeConstantOverride("separation", 8);
+        _tutorialCard.AddChild(rows);
+
+        _tutorialProgress = Ui.CreateMutedLabel(14);
+        rows.AddChild(_tutorialProgress);
+        _tutorialTitle = Ui.CreateLabel(24);
+        rows.AddChild(_tutorialTitle);
+        _tutorialText = Ui.CreateWrappedLabel(17, 560f);
+        rows.AddChild(_tutorialText);
+
+        var skip = Ui.CreateButton("Пропустить обучение (Tab)", () => TutorialSkipRequested?.Invoke());
+        skip.FocusMode = Control.FocusModeEnum.None; // иначе Пробел («ждать») нажимал бы эту кнопку
+        skip.CustomMinimumSize = new Vector2(300f, 38f);
+        skip.AddThemeFontSizeOverride("font_size", 16);
+        skip.SizeFlagsHorizontal = Control.SizeFlags.ShrinkBegin;
+        rows.AddChild(skip);
+    }
+
+    public void ShowTutorial(int step, int total, string title, string text)
+    {
+        _tutorialProgress.Text = $"Обучение  •  шаг {step} из {total}";
+        _tutorialTitle.Text = title;
+        _tutorialText.Text = text;
+        _tutorialCard.Visible = true;
+    }
+
+    public void HideTutorial() => _tutorialCard.Visible = false;
 
     public bool IsChatOpen => _chatEdit.Visible;
 

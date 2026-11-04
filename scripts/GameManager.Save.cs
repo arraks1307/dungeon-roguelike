@@ -25,7 +25,7 @@ public partial class GameManager
     /// <summary>Сохраняется только одиночная игра: сетевой забег живёт, пока подключены все игроки.</summary>
     private void SaveRun()
     {
-        if (!IsRunInProgress || !IsSinglePlayer || _isNetworkGame || _localHero.IsDead || _simulateGames > 0)
+        if (!IsRunInProgress || !IsSinglePlayer || _isNetworkGame || InTutorial || _localHero.IsDead || _simulateGames > 0)
             return;
         SaveSystem.Save(CreateSaveData());
     }

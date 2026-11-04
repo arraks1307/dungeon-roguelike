@@ -64,7 +64,7 @@ public partial class GameManager
             case TrapKind.Spikes:
                 int damage = 2 + _floor / 2;
                 hero.TakeDamage(damage);
-                if (_godMode)
+                if (IsInvulnerable)
                     hero.Heal(damage);
                 Effects.FloatingText(this, cell, $"-{damage}", DamageColor);
                 Effects.Burst(this, cell, new Color(0.8f, 0.8f, 0.85f), 10);

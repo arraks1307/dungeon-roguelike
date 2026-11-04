@@ -33,6 +33,7 @@ public partial class NetSession : Node
 
     public event Action LobbyChanged;
     public event Action<string> StatusChanged;                       // «подключаемся...», «отказано: ...»
+    public event Action PreparingRun;                                // у всех: хост начал забег, время для обучения
     public event Action<int, int, List<LobbyMember>> GameStarted;    // зерно, сложность, состав
     public event Action<long, HeroAction> ActionReceived;            // только у хоста: кто и что хочет сделать
     public event Action<int, HeroAction, int> ActionBroadcast;       // у всех: герой, действие, контрольная сумма хоста
@@ -47,6 +48,9 @@ public partial class NetSession : Node
     private string _myName = "";
     private int _myClass;
     private bool _inGame;
+    private bool _preparing;   // забег начат, но кто-то ещё проходит обучение
+    private Difficulty _pendingDifficulty;
+    private readonly HashSet<long> _readyPeers = new();
 
     public IReadOnlyList<LobbyMember> Members => _members;
     public bool IsActive { get; private set; }
@@ -114,6 +118,8 @@ public partial class NetSession : Node
         IsActive = false;
         IsHost = false;
         _inGame = false;
+        _preparing = false;
+        _readyPeers.Clear();
         _members.Clear();
     }
 
@@ -225,13 +231,57 @@ public partial class NetSession : Node
 
     // ---------- Забег ----------
 
-    /// <summary>Хост начинает забег: всем (и себе) — одно зерно, сложность и состав отряда.</summary>
+    /// <summary>
+    /// Хост начинает забег. Сначала все проходят (или пропускают) обучение — каждый у себя, —
+    /// а настоящий мир создаётся, только когда готовы все: так никто не отстаёт на старте.
+    /// </summary>
     public void StartGame(Difficulty difficulty)
     {
-        if (!IsHost)
+        if (!IsHost || _preparing)
             return;
+        _pendingDifficulty = difficulty;
+        _preparing = true;
+        _readyPeers.Clear();
+        Rpc(MethodName.PrepareRun);
+    }
+
+    [Rpc(MultiplayerApi.RpcMode.Authority, CallLocal = true)]
+    private void PrepareRun()
+    {
+        _inGame = true; // с этого момента новых игроков не пускаем, а потеря хоста прерывает игру
+        PreparingRun?.Invoke();
+    }
+
+    /// <summary>Этот игрок закончил обучение и готов к забегу.</summary>
+    public void SendReady()
+    {
+        if (IsHost)
+            MarkReady(1);
+        else if (IsActive)
+            RpcId(1, MethodName.ReadyForRun);
+    }
+
+    [Rpc(MultiplayerApi.RpcMode.AnyPeer)]
+    private void ReadyForRun()
+    {
+        if (IsHost)
+            MarkReady(Multiplayer.GetRemoteSenderId());
+    }
+
+    private void MarkReady(long peerId)
+    {
+        _readyPeers.Add(peerId);
+        StartIfAllReady();
+    }
+
+    /// <summary>Хост: все готовы — всем (и себе) одно зерно, сложность и состав отряда.</summary>
+    private void StartIfAllReady()
+    {
+        if (!IsHost || !_preparing || !_members.All(member => _readyPeers.Contains(member.PeerId)))
+            return;
+        _preparing = false;
         int seed = (int)(GD.Randi() & 0x7fffffff);
-        Rpc(MethodName.GameStart, seed, (int)difficulty, EncodeMembers());
+        Rpc(MethodName.GameStart, seed, (int)_pendingDifficulty, EncodeMembers());
     }
 
     [Rpc(MultiplayerApi.RpcMode.Authority, CallLocal = true)]
@@ -359,6 +409,7 @@ public partial class NetSession : Node
             // прямо сейчас ENet ещё считает ушедшего получателем и ругается на отправку ему пакета
             Callable.From(() => PeerLeft?.Invoke(peerId)).CallDeferred();
             _members.RemoveAll(member => member.PeerId == peerId);
+            StartIfAllReady(); // возможно, ждали только его
             return;
         }
         if (_members.RemoveAll(member => member.PeerId == peerId) > 0)

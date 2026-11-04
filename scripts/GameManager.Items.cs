@@ -20,6 +20,9 @@ public partial class GameManager
     private readonly Dictionary<Vector2I, ItemPickup> _floorItems = new();
     private Merchant _merchant;
 
+    /// <summary>Сколько сделок и выброшенных вещей было в забеге (сетевая самопроверка сверяет это число).</summary>
+    private int _tradeCount;
+
     // ---------- Предметы и золото на полу ----------
 
     private void SpawnItems(int count)
@@ -291,6 +294,7 @@ public partial class GameManager
 
         var item = inventory.TakeOne(index);
         PlaceItem(item, hero.GridPos);
+        _tradeCount++;
         Tell(hero, $"Ты выбрасываешь: {item.Name}.", $"{hero.DisplayName} выбрасывает: {item.Name}.");
         if (IsLocalHero(hero) && _state == GameState.Inventory)
             _inventoryPanel.Refresh(hero, index);
@@ -383,6 +387,7 @@ public partial class GameManager
             hero.Gold -= item.Price;
             hero.Inventory.TryAdd(item);
             _merchant.Stock.RemoveAt(index);
+            _tradeCount++;
             if (showing)
                 _shopPanel.ShowStatus($"Куплено: {item.Name}.", GoodColor);
             else
@@ -402,6 +407,7 @@ public partial class GameManager
         var item = hero.Inventory.TakeOne(index);
         hero.Gold += item.SellPrice;
         _merchant.Stock.Add(item); // проданное можно выкупить обратно по полной цене
+        _tradeCount++;
         _sound.Play(Sound.Pickup);
         if (ShopOpenFor(hero))
         {

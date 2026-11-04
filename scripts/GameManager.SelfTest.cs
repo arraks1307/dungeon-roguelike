@@ -19,6 +19,7 @@ public partial class GameManager
     private bool _godMode; // игрок не может погибнуть
     private ClassDef _testClass; // null — случайный класс
     private int _testParty = 1;  // сколько героев в отряде (все под автопилотом)
+    private string _testLoadSave; // файл сохранения (например, от старой версии), с которым стартует проверка
     private GraphicsQuality? _testGraphics; // качество графики только на время проверки
     private DifficultyDef _testDifficulty; // null — по очереди или обычная
 
@@ -31,6 +32,8 @@ public partial class GameManager
     private readonly List<SimResult> _simResults = new();
 
     private record SimResult(string Class, string Difficulty, int Floor, int Level, bool Victory, bool Timeout, int Turns);
+
+    private int _tutorialTestShots;
 
     private bool IsTestRun => _screenshotPath != null || _simulateGames > 0 || _netTestRole != null;
 
@@ -70,6 +73,16 @@ public partial class GameManager
                 _testGraphics = arg["--graphics=".Length..] == "low" ? GraphicsQuality.Low : GraphicsQuality.High;
             else if (arg.StartsWith("--party="))
                 _testParty = System.Math.Clamp(int.Parse(arg["--party=".Length..]), 1, MaxPartySize);
+            else if (arg == "--net-tutorial")
+                _netTestTutorial = true;
+            else if (arg == "--net-trade")
+                _netTestTrade = true;
+            else if (arg == "--net-ui")
+                _netTestUi = true;
+            else if (arg == "--net-input")
+                _netTestInput = true;
+            else if (arg.StartsWith("--load-save="))
+                _testLoadSave = arg["--load-save=".Length..];
             else if (arg.StartsWith("--party-tune="))
             {
                 // --party-tune=здоровье,число,урон — прибавки врагам за каждого героя сверх первого
@@ -145,11 +158,27 @@ public partial class GameManager
     private void RunSelfTest()
     {
         _frame++;
+        if (_screenshotView is "tutorial" or "tutorialskip" or "tutorialoffer")
+        {
+            RunTutorialTest();
+            return;
+        }
         bool inMenu = _screenshotView is "menu" or "scores" or "classes" or "classconfirm" or "connect" or "lobby";
 
         if (_frame == 1)
         {
-            if (_screenshotView == "connect")
+            if (_testLoadSave != null)
+            {
+                // Сохранение из другой версии игры: кладём в тестовый файл, загружаем кнопкой «Продолжить»
+                using (var file = FileAccess.Open(SaveSystem.FilePath, FileAccess.ModeFlags.Write))
+                    file.StoreString(System.IO.File.ReadAllText(_testLoadSave));
+                ContinueGame();
+                bool loaded = _state == GameState.Playing;
+                GD.Print(loaded ? $"Старое сохранение: ЗАГРУЖЕНО: {WorldSummary()}" : "Старое сохранение: НЕ ЗАГРУЗИЛОСЬ");
+                if (loaded)
+                    _localHero.IsBot = true; // дальше играет автопилот: забег должен продолжаться как обычно
+            }
+            else if (_screenshotView == "connect")
                 OpenLobby();
             else if (_screenshotView == "lobby")
             {
@@ -216,6 +245,10 @@ public partial class GameManager
             case "pause":
                 Pause();
                 break;
+            case "controls":
+                Pause();
+                _pauseMenu.ShowControls();
+                break;
             case "inventory":
                 // Набиваем сумку случайными вещами, чтобы было что показать
                 while (_localHero.Inventory.Items.Count < 8)
@@ -256,6 +289,111 @@ public partial class GameManager
                 GD.Print(before == after ? "Сохранение: СОВПАДАЕТ" : "Сохранение: РАЗЛИЧАЕТСЯ");
                 break;
         }
+    }
+
+    /// <summary>
+    /// Проверка обучения. tutorial — бот проходит все шаги настоящими действиями,
+    /// tutorialskip — обучение прерывается клавишей Tab, tutorialoffer — снимок окна с выбором.
+    /// В конце должен начаться обычный забег.
+    /// </summary>
+    private void RunTutorialTest()
+    {
+        if (_frame == 1)
+        {
+            StartNewGame(_testClass ?? ClassCatalog.Warrior, Difficulties.Normal);
+            if (_screenshotView == "tutorialoffer")
+                return;
+            _tutorialPanel.Cancel(); // сначала проверяем, что «Пропустить» запускает забег сразу
+            GD.Print($"Обучение: Пропустить → этаж {_floor}, обучение идёт: {InTutorial}, сумка {_localHero.Inventory.Items.Count}");
+            StartNewGame(_testClass ?? ClassCatalog.Warrior, Difficulties.Normal);
+            _tutorialPanel.Hide();
+            StartTutorial(_testClass ?? ClassCatalog.Warrior, null, () => StartRun(new List<HeroSpec> { new(_testClass ?? ClassCatalog.Warrior) }, Difficulties.Normal));
+            return;
+        }
+
+        if (_screenshotView == "tutorialoffer")
+        {
+            if (_frame == 30)
+            {
+                GetViewport().GetTexture().GetImage().SavePng(_screenshotPath);
+                GetTree().Quit();
+            }
+            return;
+        }
+
+        if (!InTutorial)
+        {
+            if (_frame % 20 == 0)
+            {
+                GD.Print($"Обучение: завершено, забег идёт: этаж {_floor}, раундов {_turns}, состояние {_state}, сумка {_localHero.Inventory.Items.Count}, амулет надет: {_localHero.Inventory.Equipped.Any(item => item.Template == ItemCatalog.LifeAmulet)}");
+                GetTree().Quit();
+            }
+            return;
+        }
+
+        if (_screenshotView == "tutorialskip")
+        {
+            if (_frame == 20)
+            {
+                Input.ParseInputEvent(new InputEventKey { PhysicalKeycode = Key.Tab, Keycode = Key.Tab, Pressed = true });
+                GD.Print("Обучение: нажат Tab");
+            }
+            if (_frame > 200)
+            {
+                GD.Print("Обучение: Tab НЕ СРАБОТАЛ");
+                GetTree().Quit(1);
+            }
+            return;
+        }
+
+        if (_tutorialStep == TutorialStep.Fight && _tutorialTestShots++ == 10)
+            GetViewport().GetTexture().GetImage().SavePng(_screenshotPath);
+        if (_frame > 3000)
+        {
+            GD.Print($"Обучение: ЗАВИСЛО на шаге {_tutorialStep}");
+            GetTree().Quit(1);
+            return;
+        }
+        if (_frame % 6 == 0)
+            TutorialBotTurn();
+    }
+
+    /// <summary>Один ход бота на уровне обучения: делает то, чего требует текущий шаг.</summary>
+    private void TutorialBotTurn()
+    {
+        var hero = _localHero;
+        int Slot(ItemTemplate template) => hero.Inventory.Items.FindIndex(item => item.Template == template);
+        Vector2I Enemy() => _enemies.Count > 0 ? _enemies[0].GridPos : hero.GridPos;
+
+        switch (_tutorialStep)
+        {
+            case TutorialStep.Equip:
+                if (Slot(ItemCatalog.LifeAmulet) >= 0)
+                    PerformHeroAction(hero, HeroAction.UseItem(Slot(ItemCatalog.LifeAmulet)));
+                return;
+            case TutorialStep.Potion:
+                if (Slot(ItemCatalog.HealthPotion) >= 0)
+                    PerformHeroAction(hero, HeroAction.UseItem(Slot(ItemCatalog.HealthPotion)));
+                return;
+            case TutorialStep.Skill when _map.AreAdjacent(hero.GridPos, Enemy()):
+                PerformHeroAction(hero, HeroAction.Skill(0));
+                return;
+        }
+
+        var goal = _tutorialStep switch
+        {
+            TutorialStep.Walk => TutorialWalkGoal,
+            TutorialStep.Door => TutorialDoor,
+            TutorialStep.PickUp => TutorialItemCell,
+            TutorialStep.Fight or TutorialStep.Skill => Enemy(),
+            _ => TutorialStairs,
+        };
+        var distances = _map.DistanceField(goal, MapWidth * MapHeight);
+        var step = DungeonMap.Directions
+            .Where(direction => _map.CanMove(hero.GridPos, hero.GridPos + direction) && distances.ContainsKey(hero.GridPos + direction))
+            .OrderBy(direction => distances[hero.GridPos + direction])
+            .FirstOrDefault();
+        PerformHeroAction(hero, HeroAction.Move(step));
     }
 
     /// <summary>Каждый герой, который ещё не сходил в этом раунде, делает ход автопилотом.</summary>

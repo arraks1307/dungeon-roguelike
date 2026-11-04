@@ -25,6 +25,7 @@ public partial class LobbyPanel : CanvasLayer
     private LineEdit _nameEdit;
     private LineEdit _addressEdit;
     private Button _hostButton;
+    private Button _joinButton;
     private Label _connectStatus;
 
     private VBoxContainer _memberList;
@@ -67,7 +68,8 @@ public partial class LobbyPanel : CanvasLayer
         column.AddChild(buttons);
         _hostButton = Ui.CreateButton("Создать игру", () => HostRequested?.Invoke(_nameEdit.Text));
         buttons.AddChild(_hostButton);
-        buttons.AddChild(Ui.CreateButton("Подключиться", () => JoinRequested?.Invoke(_nameEdit.Text, _addressEdit.Text)));
+        _joinButton = Ui.CreateButton("Подключиться", () => JoinRequested?.Invoke(_nameEdit.Text, _addressEdit.Text));
+        buttons.AddChild(_joinButton);
 
         _connectStatus = Ui.CreateWrappedLabel(16, 612f);
         _connectStatus.AddThemeColorOverride("font_color", UiTheme.TextMuted);
@@ -218,6 +220,12 @@ public partial class LobbyPanel : CanvasLayer
         if (!string.IsNullOrWhiteSpace(address))
             _addressEdit.Text = address;
     }
+
+    // Для самопроверки: «нажать» те же кнопки, что и игрок. EmitSignal запускает настоящие обработчики
+    public void ClickHost() => _hostButton.EmitSignal(BaseButton.SignalName.Pressed);
+    public void ClickJoin() => _joinButton.EmitSignal(BaseButton.SignalName.Pressed);
+    public void ClickStart() => _startButton.EmitSignal(BaseButton.SignalName.Pressed);
+    public void ClickClass(int index) => _classButtons[index].EmitSignal(BaseButton.SignalName.Pressed);
 
     public string EnteredName => _nameEdit.Text;
     public string EnteredAddress => _addressEdit.Text;

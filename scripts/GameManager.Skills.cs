@@ -44,6 +44,7 @@ public partial class GameManager
             return false;
 
         hero.StartCooldown(index);
+        _tutorialSkillUsed = true;
         if (hero.IsInvisible && skill.Id != SkillId.SecondWind)
         {
             hero.BreakInvisibility();
@@ -198,6 +199,8 @@ public partial class GameManager
     /// </summary>
     private void TryShowLevelUp()
     {
+        if (InTutorial)
+            return; // герой обучения временный, улучшения ему ни к чему
         if (!_isNetworkGame)
         {
             foreach (var hero in _heroes.Where(hero => hero.IsBot))
